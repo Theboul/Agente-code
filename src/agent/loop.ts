@@ -106,13 +106,21 @@ export function isTransient(e: unknown): boolean {
   );
 }
 
+const MAX_WAIT_MS = 120_000;
+
+/** Segundos que el proveedor pide esperar ("retry in 52s"), si lo indica. */
+export function suggestedWaitMs(e: unknown): number | undefined {
+  for (const err of chain(e)) {
+    const m = /retry in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s/i.exec(err.message ?? '');
+    if (m) return ((Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0)) * 60 + parseFloat(m[3]!)) * 1000;
+  }
+  return undefined;
+}
+
 /** Espera antes de reintentar: la que sugiere el proveedor ("retry in 52s") o exponencial 2s, 4s, 8s. */
 export function retryDelayMs(e: unknown, attempt: number): number {
-  for (const err of chain(e)) {
-    const m = /retry in ([\d.]+)\s*s/i.exec(err.message ?? '');
-    if (m) return Math.min(120_000, Math.ceil(parseFloat(m[1]!) * 1000) + 500);
-  }
-  return 2000 * 2 ** attempt;
+  const hint = suggestedWaitMs(e);
+  return hint !== undefined ? Math.min(MAX_WAIT_MS, Math.ceil(hint) + 500) : 2000 * 2 ** attempt;
 }
 
 /**
@@ -127,6 +135,13 @@ export async function runTurn(opts: TurnOptions & { retries?: number; sleep?: (m
       return await runTurnOnce(opts);
     } catch (e) {
       if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) throw e;
+      const hint = suggestedWaitMs(e);
+      if (hint !== undefined && hint > MAX_WAIT_MS) {
+        const mins = Math.round(hint / 60_000);
+        throw new Error(
+          `Cuota agotada: el proveedor pide esperar ~${mins >= 90 ? `${Math.round(mins / 60)} h` : `${mins} min`}. Usa otra clave o modelo (--model), o habilita facturación.`,
+        );
+      }
       const wait = retryDelayMs(e, attempt);
       opts.onRetry?.(attempt + 1, e, wait);
       await sleep(wait);

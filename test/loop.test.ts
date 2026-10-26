@@ -2,7 +2,7 @@ import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test';
 import { tool } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { retryDelayMs, runTurn } from '../src/agent/loop.js';
+import { retryDelayMs, runTurn, suggestedWaitMs } from '../src/agent/loop.js';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
@@ -81,6 +81,10 @@ describe('reintentos ante errores temporales', () => {
     sleeps.length = 0;
     await runTurn({ ...base, model: make(quota, 1) });
     expect(sleeps).toEqual([3700]);
+
+    const daily = Object.assign(new Error('x'), { lastError: new Error('quota. Please retry in 9h55m28.03s.') });
+    expect(suggestedWaitMs(daily)).toBeCloseTo((9 * 3600 + 55 * 60 + 28.03) * 1000, 0);
+    await expect(runTurn({ ...base, model: make(daily, 5) })).rejects.toThrow(/Cuota agotada.*10 h/);
 
     const bad = Object.assign(new Error('clave inválida'), { statusCode: 401 });
     await expect(runTurn({ ...base, model: make(bad, 5) })).rejects.toThrow(/clave inválida/);
