@@ -1,9 +1,9 @@
 {
-  "model": "google/gemini-flash-latest",
+  "model": "google/gemini-3.5-flash",
   "roles": {
-    "plan": "google/gemini-pro-latest",
-    "implement": "google/gemini-flash-latest",
-    "light": "google/gemini-flash-latest"
+    "plan": "google/gemini-3.5-flash",
+    "implement": "google/gemini-3.5-flash",
+    "light": "google/gemini-3.5-flash"
   },
   "providers": {
     "ollama": { "baseURL": "http://localhost:11434/v1" }

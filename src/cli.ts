@@ -32,7 +32,7 @@ Uso:
   agente init                    Crea agente.config.json y .agente/prompts/ para personalizar
 
 Opciones:
-  -m, --model <prov/modelo>   Usa este modelo en todas las etapas (ej. google/gemini-flash-latest)
+  -m, --model <prov/modelo>   Usa este modelo en todas las etapas (ej. google/gemini-3.5-flash)
   -r, --role <rol>            (chat) modelo del rol: ${ROLES.join(' | ')}
   -p, --prompt <texto>        (chat) un solo turno y salir
       --base <rama>           (work) rama base; por defecto la actual
@@ -138,6 +138,8 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
         tools: toolset,
         messages,
         maxSteps: config.maxSteps,
+        idleTimeoutMs: config.requestTimeoutSeconds * 1000,
+        onRetry: (n, e, ms) => console.log(dim(`\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`)),
         abortSignal: ac.signal,
         onText: (d) => stream && process.stdout.write(d),
         onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
@@ -145,6 +147,8 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
       });
       if (stream) console.log();
       return { text: r.text, newMessages: r.newMessages };
+    } catch (e) {
+      throw ac.signal.aborted ? new Error('Interrumpido por el usuario.') : new Error(`Falló el modelo ${modelId}: ${e instanceof Error ? e.message : e}`);
     } finally {
       process.off('SIGINT', onSigint);
     }
@@ -284,6 +288,8 @@ async function chat(ctx: Ctx) {
         tools,
         messages: history,
         maxSteps: config.maxSteps,
+        idleTimeoutMs: config.requestTimeoutSeconds * 1000,
+        onRetry: (n, e, ms) => console.log(dim(`\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`)),
         abortSignal: ac.signal,
         onText: (d) => process.stdout.write(d),
         onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
@@ -294,7 +300,7 @@ async function chat(ctx: Ctx) {
     } catch (e) {
       history.pop();
       if (ac.signal.aborted) console.log(dim('\n(interrumpido)'));
-      else console.error(`\nError: ${e instanceof Error ? e.message : e}`);
+      else console.error(`\nError con ${modelId}: ${e instanceof Error ? e.message : e}`);
     } finally {
       process.off('SIGINT', onSigint);
     }
@@ -352,8 +358,8 @@ async function init(cwd: string) {
     join(cwd, 'agente.config.json'),
     JSON.stringify(
       {
-        model: 'google/gemini-flash-latest',
-        roles: { plan: 'google/gemini-flash-latest', implement: 'google/gemini-flash-latest' },
+        model: 'google/gemini-3.5-flash',
+        roles: { plan: 'google/gemini-3.5-flash', implement: 'google/gemini-3.5-flash' },
         workflow: { branchPrefix: 'feat/', isolation: 'branch', maxFixAttempts: 3 },
         mcpServers: {},
       },

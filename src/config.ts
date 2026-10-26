@@ -67,7 +67,7 @@ export type WorkflowConfig = z.infer<typeof WorkflowConfig>;
 
 const ConfigSchema = z.object({
   /** Modelo por defecto, formato "proveedor/modelo". */
-  model: z.string().default('google/gemini-flash-latest'),
+  model: z.string().default('google/gemini-3.5-flash'),
   /** Sobrescribe el modelo para un rol concreto. */
   roles: z.partialRecord(z.enum(ROLES), z.string()).default({}),
   /** Proveedores personalizados o con URL propia (p. ej. ollama, openai-compatible). */
@@ -75,6 +75,8 @@ const ConfigSchema = z.object({
   /** Servidores MCP (Jira, Trello, GitHub…). Los valores admiten ${VARIABLE} del entorno. */
   mcpServers: z.record(z.string(), McpServerConfig).default({}),
   workflow: WorkflowConfig.prefault({}),
+  /** Segundos sin respuesta del modelo antes de abortar (no cuenta el tiempo de las herramientas). */
+  requestTimeoutSeconds: z.number().int().positive().default(90),
   /** Máximo de pasos del bucle agéntico por turno. */
   maxSteps: z.number().int().positive().default(40),
   /** Comandos bash permitidos sin preguntar (prefijos). */
