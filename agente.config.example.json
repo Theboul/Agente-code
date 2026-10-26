@@ -8,5 +8,17 @@
   "providers": {
     "ollama": { "baseURL": "http://localhost:11434/v1" }
   },
+  "mcpServers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" },
+      "autoApprove": ["list_issues", "issue_read", "search_issues"]
+    },
+    "trello": {
+      "command": "npx",
+      "args": ["-y", "<paquete-mcp-de-trello>"],
+      "env": { "TRELLO_API_KEY": "${TRELLO_API_KEY}", "TRELLO_TOKEN": "${TRELLO_TOKEN}" }
+    }
+  },
   "maxSteps": 40
 }

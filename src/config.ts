@@ -11,6 +11,24 @@ const ProviderConfig = z.object({
   apiKeyEnv: z.string().optional(),
 });
 
+const McpServerConfig = z
+  .object({
+    /** Servidor local (stdio). */
+    command: z.string().optional(),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).default({}),
+    /** Servidor remoto (HTTP en streaming o SSE). */
+    url: z.string().optional(),
+    transport: z.enum(['http', 'sse']).default('http'),
+    headers: z.record(z.string(), z.string()).default({}),
+    /** Herramientas que se ejecutan sin preguntar: lista de nombres originales, o true para todas. */
+    autoApprove: z.union([z.boolean(), z.array(z.string())]).default([]),
+    enabled: z.boolean().default(true),
+  })
+  .refine((s) => Boolean(s.command) !== Boolean(s.url), { message: 'Define "command" (stdio) o "url" (remoto), no ambos.' });
+
+export type McpServerConfig = z.infer<typeof McpServerConfig>;
+
 const ConfigSchema = z.object({
   /** Modelo por defecto, formato "proveedor/modelo". */
   model: z.string().default('google/gemini-flash-latest'),
@@ -18,6 +36,8 @@ const ConfigSchema = z.object({
   roles: z.partialRecord(z.enum(ROLES), z.string()).default({}),
   /** Proveedores personalizados o con URL propia (p. ej. ollama, openai-compatible). */
   providers: z.record(z.string(), ProviderConfig).default({}),
+  /** Servidores MCP (Jira, Trello, GitHub…). Los valores admiten ${VARIABLE} del entorno. */
+  mcpServers: z.record(z.string(), McpServerConfig).default({}),
   /** Máximo de pasos del bucle agéntico por turno. */
   maxSteps: z.number().int().positive().default(40),
   /** Comandos bash permitidos sin preguntar (prefijos). */

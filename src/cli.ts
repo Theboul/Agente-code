@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import type { ModelMessage } from 'ai';
 import { buildSystemPrompt } from './agent/system.js';
 import { runTurn } from './agent/loop.js';
+import { connectMcpServers, type McpConnections } from './mcp/client.js';
 import { loadConfig, modelFor, ROLES, type Role } from './config.js';
 import type { Permissions } from './permissions.js';
 import { missingKeyHint, resolveModel } from './providers.js';
@@ -22,7 +23,7 @@ Opciones:
   -y, --yes                   Aprobar ediciones y comandos sin preguntar
   -h, --help
 
-Dentro del chat: /model <prov/modelo>, /role <rol>, /clear, /exit
+Dentro del chat: /model <prov/modelo>, /role <rol>, /mcp, /clear, /exit
 Config: agente.config.json en el proyecto (ver README).`;
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -52,7 +53,6 @@ async function main() {
 
   const cwd = process.cwd();
   const config = await loadConfig(cwd);
-  const interactive = process.stdin.isTTY && values.prompt === undefined;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   const perms: Permissions = {
@@ -67,7 +67,15 @@ async function main() {
 
   let modelId = values.model ?? modelFor(config, (values.role as Role | undefined) ?? 'implement');
   const system = await buildSystemPrompt(cwd);
-  const tools = nativeTools(cwd, perms);
+  const mcp: McpConnections = await connectMcpServers(config.mcpServers, perms);
+  const tools = { ...mcp.tools, ...nativeTools(cwd, perms) };
+  const printMcp = () => {
+    if (!mcp.status.length) return console.log(dim('Sin servidores MCP configurados (mcpServers en agente.config.json).'));
+    for (const s of mcp.status) {
+      console.log(s.ok ? `  ✓ ${s.name}: ${s.tools.length} herramientas` : `  ✗ ${s.name}: ${s.error}`);
+      if (s.ok) for (const t of s.tools) console.log(dim(`      ${t}`));
+    }
+  };
   let history: ModelMessage[] = [];
 
   const turn = async (input: string) => {
@@ -103,10 +111,13 @@ async function main() {
   if (values.prompt !== undefined) {
     await turn(values.prompt);
     rl.close();
+    await mcp.close();
     return;
   }
 
-  console.log(`agente · ${modelId} · ${cwd}\n${dim('/model, /role, /clear, /exit')}`);
+  console.log(`agente · ${modelId} · ${cwd}\n${dim('/model, /role, /mcp, /clear, /exit')}`);
+  for (const s of mcp.status) if (!s.ok) console.log(`⚠ MCP ${s.name}: ${s.error}`);
+  if (mcp.status.some((s) => s.ok)) console.log(dim(`MCP: ${Object.keys(mcp.tools).length} herramientas (/mcp para ver)`));
   rl.on('SIGINT', () => {});
   for (;;) {
     let line: string;
@@ -120,6 +131,8 @@ async function main() {
     if (line === '/clear') {
       history = [];
       console.log(dim('Historial limpiado.'));
+    } else if (line === '/mcp') {
+      printMcp();
     } else if (line.startsWith('/model ')) {
       modelId = line.slice(7).trim();
       console.log(dim(`Modelo: ${modelId}`));
@@ -132,8 +145,8 @@ async function main() {
       }
     } else await turn(line);
   }
-  void interactive;
   rl.close();
+  await mcp.close();
 }
 
 main().catch((e) => {
