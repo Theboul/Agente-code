@@ -2,7 +2,7 @@
 
 Arnés de código para la consola: multi-modelo, con herramientas de archivos y shell, pensado para conectar MCPs (Jira, Trello, GitHub) y llevar una issue hasta el PR.
 
-**Estado:** hitos 1 (núcleo) y 2 (MCP) listos. Pendiente: flujo issue → PR (hitos 3-4).
+**Estado:** hitos 1 (núcleo), 2 (MCP) y 3 (flujo hasta la revisión) listos. Pendiente: commit, push y PR (hito 4).
 
 ## Uso
 
@@ -13,6 +13,8 @@ npm run dev                                # chat interactivo en el directorio a
 npm run dev -- -p "explica src/config.ts"  # un solo turno
 npm run dev -- -m anthropic/<modelo>       # cambiar de modelo
 ```
+
+Comandos: `agente` (chat), `agente work <issue>`, `agente issues`, `agente init`. Ver `agente --help`.
 
 Dentro del chat: `/model <prov/modelo>`, `/role <plan|implement|light>`, `/mcp`, `/clear`, `/exit`.
 
@@ -38,3 +40,26 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 - Las herramientas llegan al modelo como `mcp__<servidor>__<herramienta>`.
 - **Piden confirmación por defecto.** Usa `autoApprove` con una lista de herramientas (p. ej. solo las de lectura) o `true` para todas.
 - Si un servidor falla al conectar, se avisa y el resto sigue funcionando. `/mcp` muestra el estado y las herramientas.
+
+## Flujo `agente work`
+
+Es el mismo flujo que usan los demás arneses de código:
+
+```
+issue → 1 PLAN → 2 RAMA → 3 IMPLEMENTACIÓN + VERIFICACIÓN → 4 REVISIÓN
+```
+
+1. **Plan** (modelo del rol `plan`, solo lectura): propone el plan. Lo apruebas con `a`, lo cancelas con `x`, o escribes qué cambiar y lo regenera. Aún no se ha creado nada.
+2. **Rama**: `feat/<clave>-<título>`. Por defecto en tu repo (exige árbol limpio). Con `--worktree` (o `workflow.isolation: "worktree"`) trabaja en una copia aislada en `../<repo>-worktrees/` e instala las dependencias.
+3. **Implementación** (rol `implement`) y **verificación**: tras implementar, el flujo ejecuta tú mismo los comandos (no el modelo): lint → typecheck → test, detectados de `package.json` (también `cargo test`, `go test`). Si fallan, el modelo recibe la salida y corrige, hasta `maxFixAttempts` veces.
+4. **Revisión**: ves el diff; aceptas con `a`, descartas con `x` (te muestra los comandos de limpieza), o pides cambios escribiéndolos (se vuelve a verificar).
+
+Al terminar los cambios quedan **sin commit**; commit, push y PR llegan en el hito 4. Cada ejecución guarda su plan en `.git/agente/runs/`.
+
+La issue puede ser `PROJ-123`, `#45` o una URL (la lee el modelo vía MCP), un archivo `.md` (primera línea = título) o texto libre. `agente issues` lista las del tracker y te deja elegir.
+
+### Personalizar
+
+- `agente init` crea `agente.config.json` y copia los prompts de cada etapa a `.agente/prompts/*.md` (`plan`, `implement`, `fix`, `issue-fetch`, `issue-list`). Edítalos y versiónalos con el repo; variables: `{{issue.key}}`, `{{issue.title}}`, `{{issue.body}}`, `{{plan}}`, `{{branch}}`, `{{verify.command}}`, `{{verify.output}}`.
+- `workflow` en la config: `branchPrefix`, `isolation`, `worktreeDir`, `setup`, `verify` (tus propios comandos; `[]` desactiva), `maxFixAttempts`, `issueQuery`.
+- Un modelo distinto por etapa con `roles` (`plan` / `implement` / `light`).

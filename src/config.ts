@@ -29,6 +29,25 @@ const McpServerConfig = z
 
 export type McpServerConfig = z.infer<typeof McpServerConfig>;
 
+const WorkflowConfig = z.object({
+  /** Prefijo de las ramas creadas, p. ej. "feat/" → feat/proj-123-arreglar-login. */
+  branchPrefix: z.string().default('feat/'),
+  /** "branch": rama en el propio repo (exige árbol limpio). "worktree": copia aislada en otra carpeta. */
+  isolation: z.enum(['branch', 'worktree']).default('branch'),
+  /** Carpeta de los worktrees. Por defecto "../<repo>-worktrees". */
+  worktreeDir: z.string().optional(),
+  /** Comandos tras crear un worktree (instalar dependencias). Si falta, se detecta (p. ej. npm ci). */
+  setup: z.array(z.string()).optional(),
+  /** Comandos de verificación, en orden. Si falta, se detectan (lint, typecheck, test…). [] = sin verificación. */
+  verify: z.array(z.string()).optional(),
+  /** Intentos de corrección automática cuando falla la verificación. */
+  maxFixAttempts: z.number().int().min(0).default(3),
+  /** Qué issues listar con `agente issues` (lenguaje natural, se lo pasa al modelo). */
+  issueQuery: z.string().default('abiertas, sin asignar o asignadas a mí, las más recientes primero'),
+});
+
+export type WorkflowConfig = z.infer<typeof WorkflowConfig>;
+
 const ConfigSchema = z.object({
   /** Modelo por defecto, formato "proveedor/modelo". */
   model: z.string().default('google/gemini-flash-latest'),
@@ -38,6 +57,7 @@ const ConfigSchema = z.object({
   providers: z.record(z.string(), ProviderConfig).default({}),
   /** Servidores MCP (Jira, Trello, GitHub…). Los valores admiten ${VARIABLE} del entorno. */
   mcpServers: z.record(z.string(), McpServerConfig).default({}),
+  workflow: WorkflowConfig.prefault({}),
   /** Máximo de pasos del bucle agéntico por turno. */
   maxSteps: z.number().int().positive().default(40),
   /** Comandos bash permitidos sin preguntar (prefijos). */
