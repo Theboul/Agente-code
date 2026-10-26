@@ -1,0 +1,12 @@
+{
+  "model": "google/gemini-flash-latest",
+  "roles": {
+    "plan": "google/gemini-pro-latest",
+    "implement": "google/gemini-flash-latest",
+    "light": "google/gemini-flash-latest"
+  },
+  "providers": {
+    "ollama": { "baseURL": "http://localhost:11434/v1" }
+  },
+  "maxSteps": 40
+}
