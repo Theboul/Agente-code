@@ -2,7 +2,7 @@
 
 Arnés de código para la consola: multi-modelo, con herramientas de archivos y shell, pensado para conectar MCPs (Jira, Trello, GitHub) y llevar una issue hasta el PR.
 
-**Estado:** hitos 1 (núcleo), 2 (MCP) y 3 (flujo hasta la revisión) listos. Pendiente: commit, push y PR (hito 4).
+**Estado:** hitos 1 a 4 listos: del issue al PR y la sincronización con el tracker.
 
 ## Uso
 
@@ -14,7 +14,7 @@ npm run dev -- -p "explica src/config.ts"  # un solo turno
 npm run dev -- -m anthropic/<modelo>       # cambiar de modelo
 ```
 
-Comandos: `agente` (chat), `agente work <issue>`, `agente issues`, `agente init`. Ver `agente --help`.
+Comandos: `agente` (chat), `agente work <issue>`, `agente ship`, `agente issues`, `agente init`. Ver `agente --help`.
 
 Dentro del chat: `/model <prov/modelo>`, `/role <plan|implement|light>`, `/mcp`, `/clear`, `/exit`.
 
@@ -54,7 +54,7 @@ issue → 1 PLAN → 2 RAMA → 3 IMPLEMENTACIÓN + VERIFICACIÓN → 4 REVISIÓ
 3. **Implementación** (rol `implement`) y **verificación**: tras implementar, el flujo ejecuta tú mismo los comandos (no el modelo): lint → typecheck → test, detectados de `package.json` (también `cargo test`, `go test`). Si fallan, el modelo recibe la salida y corrige, hasta `maxFixAttempts` veces.
 4. **Revisión**: ves el diff; aceptas con `a`, descartas con `x` (te muestra los comandos de limpieza), o pides cambios escribiéndolos (se vuelve a verificar).
 
-Al terminar los cambios quedan **sin commit**; commit, push y PR llegan en el hito 4. Cada ejecución guarda su plan en `.git/agente/runs/`.
+Al terminar, `work` pregunta si entregar de inmediato; si no, los cambios quedan sin commit y los entregas después con `agente ship`. Cada ejecución guarda issue, plan y resultado en `.git/agente/runs/`.
 
 La issue puede ser `PROJ-123`, `#45` o una URL (la lee el modelo vía MCP), un archivo `.md` (primera línea = título) o texto libre. `agente issues` lista las del tracker y te deja elegir.
 
@@ -63,3 +63,23 @@ La issue puede ser `PROJ-123`, `#45` o una URL (la lee el modelo vía MCP), un a
 - `agente init` crea `agente.config.json` y copia los prompts de cada etapa a `.agente/prompts/*.md` (`plan`, `implement`, `fix`, `issue-fetch`, `issue-list`). Edítalos y versiónalos con el repo; variables: `{{issue.key}}`, `{{issue.title}}`, `{{issue.body}}`, `{{plan}}`, `{{branch}}`, `{{verify.command}}`, `{{verify.output}}`.
 - `workflow` en la config: `branchPrefix`, `isolation`, `worktreeDir`, `setup`, `verify` (tus propios comandos; `[]` desactiva), `maxFixAttempts`, `issueQuery`.
 - Un modelo distinto por etapa con `roles` (`plan` / `implement` / `light`).
+
+## Entrega: `agente ship`
+
+Después de `work` (o con `agente work ... --ship` de una vez, sin confirmaciones intermedias):
+
+```
+5 COMMIT → 6 PUSH → 7 PULL REQUEST → 8 TRACKER
+```
+
+- **Commit:** el rol `light` redacta un mensaje Conventional Commits en español a partir del diff; lo apruebas, lo rechazas o pides cambios. Los archivos que parecen secretos (`.env`, `*.pem`, `id_rsa*`…) nunca se añaden ni se envían al modelo. Los hooks de git se respetan.
+- **Push:** `git push -u <remoto> <rama>`, nunca `--force`. Solo reintenta ante fallos de red (2 s, 4 s, 8 s, 16 s). No se entrega desde `main`/`master`, la rama base ni `protectedBranches`.
+- **PR:** método `auto`: `gh` si está autenticado → herramienta MCP de PR (p. ej. el MCP de GitHub) → enlace para abrirlo a mano con la descripción ya guardada. Usa `.github/pull_request_template.md` si existe. `--draft` lo abre como borrador.
+- **Tracker:** si la issue vino de un tracker, comenta el enlace del PR por MCP y, con `workflow.syncStatus` (p. ej. `"In Review"`), mueve su estado. Si falla, el PR sigue creado y solo se avisa.
+- **`--yes` no sube nada:** aprueba planes y ediciones, pero push y PR piden confirmación salvo con `--ship`.
+
+### Sin coautores
+
+Ningún commit, mensaje de PR ni comentario lleva `Co-Authored-By`, `Claude-Session` ni líneas "Generated with": se eliminan del texto del modelo por código y, si un hook de git añade una coautoría, se corrige el commit local antes del push. El autor es siempre tu `git config user.name/user.email`.
+
+Opciones en `workflow`: `remote`, `protectedBranches`, `pushRetries`, `pr.method` (`auto|gh|mcp|manual`), `pr.draft`, `sync`, `syncStatus`. Prompts editables: `commit.md`, `pr.md`, `sync.md`.

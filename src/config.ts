@@ -42,6 +42,23 @@ const WorkflowConfig = z.object({
   verify: z.array(z.string()).optional(),
   /** Intentos de corrección automática cuando falla la verificación. */
   maxFixAttempts: z.number().int().min(0).default(3),
+  /** Remoto al que se hace push. */
+  remote: z.string().default('origin'),
+  /** Ramas en las que nunca se hace commit/push desde el flujo (además de la rama base). */
+  protectedBranches: z.array(z.string()).default(['main', 'master']),
+  /** Reintentos del push ante fallos de red (espera 2s, 4s, 8s, 16s…). */
+  pushRetries: z.number().int().min(0).default(4),
+  pr: z
+    .object({
+      /** auto: gh si está autenticado → herramienta MCP de PR → enlace manual. */
+      method: z.enum(['auto', 'gh', 'mcp', 'manual']).default('auto'),
+      draft: z.boolean().default(false),
+    })
+    .prefault({}),
+  /** Tras abrir el PR, comentar en la issue del tracker (vía MCP). */
+  sync: z.boolean().default(true),
+  /** Estado al que mover la issue tras el PR, p. ej. "In Review". Vacío = solo comentar. */
+  syncStatus: z.string().optional(),
   /** Qué issues listar con `agente issues` (lenguaje natural, se lo pasa al modelo). */
   issueQuery: z.string().default('abiertas, sin asignar o asignadas a mí, las más recientes primero'),
 });

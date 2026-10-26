@@ -8,14 +8,17 @@ import type { ModelMessage } from 'ai';
 import { runTurn } from './agent/loop.js';
 import { buildSystemPrompt } from './agent/system.js';
 import { loadConfig, modelFor, ROLES, type Config, type Role } from './config.js';
-import { repoRoot } from './git.js';
+import { currentBranch, repoRoot } from './git.js';
 import { connectMcpServers, type McpConnections } from './mcp/client.js';
 import type { Permissions } from './permissions.js';
 import { missingKeyHint, resolveModel } from './providers.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
 import { classifyRef, extractJson, IssueListSchema, IssueSchema, issueFromFile, issueFromText, type Issue } from './workflow/issue.js';
 import { DEFAULT_PROMPTS, loadPrompt } from './workflow/prompts.js';
+import { makePrCreator } from './workflow/pr.js';
 import { runWorkflow, type StageRunner } from './workflow/run.js';
+import { findRun } from './workflow/runs.js';
+import { ship } from './workflow/ship.js';
 import { detectVerifyCommands } from './workflow/verify.js';
 
 const HELP = `agente — arnés de código multi-modelo
@@ -24,6 +27,7 @@ Uso:
   agente [chat]                  Sesión interactiva en el directorio actual
   agente work <issue>            Flujo completo: plan → rama → implementación → verificación → revisión
                                  <issue> = PROJ-123 | #45 | URL (vía MCP), archivo .md/.txt, o texto libre
+  agente ship [rama]             Commit → push → PR → sincroniza el tracker (tras "work")
   agente issues                  Lista issues del tracker (MCP), eliges una y sigue el flujo
   agente init                    Crea agente.config.json y .agente/prompts/ para personalizar
 
@@ -34,6 +38,8 @@ Opciones:
       --base <rama>           (work) rama base; por defecto la actual
       --worktree              (work) trabajar en un worktree aislado en vez de una rama en el repo
       --no-verify             (work) omitir la verificación automática
+      --ship                  (work/ship) entregar sin confirmaciones intermedias (commit, push y PR)
+      --draft                 (ship) abrir el PR como borrador
   -y, --yes                   Aprobar planes, ediciones y comandos sin preguntar
   -h, --help
 
@@ -55,6 +61,8 @@ const { values, positionals } = parseArgs({
     base: { type: 'string' },
     worktree: { type: 'boolean' },
     'no-verify': { type: 'boolean' },
+    ship: { type: 'boolean' },
+    draft: { type: 'boolean' },
     yes: { type: 'boolean', short: 'y' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -63,7 +71,7 @@ const { values, positionals } = parseArgs({
 async function main() {
   if (values.help) return console.log(HELP);
   const cmd = positionals[0] ?? 'chat';
-  if (!['chat', 'work', 'issues', 'init'].includes(cmd)) {
+  if (!['chat', 'work', 'ship', 'issues', 'init'].includes(cmd)) {
     console.error(`Comando desconocido: ${cmd}\n\n${HELP}`);
     process.exitCode = 1;
     return;
@@ -92,6 +100,7 @@ async function main() {
   try {
     if (cmd === 'chat') await chat({ cwd, config, perms, mcp, rl });
     else if (cmd === 'work') await work({ cwd, root, config, perms, mcp, rl });
+    else if (cmd === 'ship') await shipCmd({ cwd, root, config, perms, mcp, rl });
     else await issues({ cwd, root, config, perms, mcp, rl });
   } finally {
     rl.close();
@@ -115,7 +124,10 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
     const hint = missingKeyHint(modelId, config);
     if (hint) throw new Error(`Falta la variable de entorno ${hint} para usar ${modelId}.`);
     console.log(dim(`\n[${role} · ${modelId}]`));
-    const toolset = tools === 'readonly' ? readOnlyTools(workdir, perms) : { ...mcp.tools, ...nativeTools(workdir, perms) };
+    // Sin herramientas = redacción de commit/PR: se muestra ya sanitizado por el flujo, no el texto crudo.
+    const stream = tools !== 'none';
+    const toolset =
+      tools === 'none' ? {} : tools === 'readonly' ? readOnlyTools(workdir, perms) : tools === 'mcp' ? mcp.tools : { ...mcp.tools, ...nativeTools(workdir, perms) };
     const ac = new AbortController();
     const onSigint = () => ac.abort();
     process.once('SIGINT', onSigint);
@@ -127,11 +139,11 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
         messages,
         maxSteps: config.maxSteps,
         abortSignal: ac.signal,
-        onText: (d) => process.stdout.write(d),
+        onText: (d) => stream && process.stdout.write(d),
         onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
         onToolResult: (n, o) => console.log(dim(`  ↳ ${short(o, 200)}`)),
       });
-      console.log();
+      if (stream) console.log();
       return { text: r.text, newMessages: r.newMessages };
     } finally {
       process.off('SIGINT', onSigint);
@@ -165,6 +177,16 @@ async function resolveIssue(ctx: Ctx, ref: string): Promise<Issue> {
   return { ...issue, key: issue.key ?? c.ref };
 }
 
+function workflowIO(ctx: Ctx) {
+  return {
+    say: (m: string) => console.log(m),
+    ask: async (q: string) => {
+      if (!process.stdin.isTTY) throw new Error('Se necesita una terminal interactiva para aprobar (o usa --yes / --ship).');
+      return ctx.rl.question(q);
+    },
+  };
+}
+
 async function startWork(ctx: Ctx, issue: Issue) {
   const result = await runWorkflow({
     cwd: ctx.cwd,
@@ -175,15 +197,51 @@ async function startWork(ctx: Ctx, issue: Issue) {
     yes: values.yes,
     noVerify: values['no-verify'],
     runStage: makeStageRunner(ctx),
-    io: {
-      say: (m) => console.log(m),
-      ask: async (q) => {
-        if (!process.stdin.isTTY) throw new Error('Se necesita una terminal interactiva para aprobar (o usa --yes).');
-        return ctx.rl.question(q);
-      },
-    },
+    io: workflowIO(ctx),
   });
-  if (result.status !== 'ready') process.exitCode = result.status === 'failed' ? 1 : 0;
+  if (result.status !== 'ready') {
+    process.exitCode = result.status === 'failed' ? 1 : 0;
+    return;
+  }
+  const yes = /^(s|si|sí|y|yes)$/i;
+  const now = values.ship || (process.stdin.isTTY && yes.test((await ctx.rl.question('\n¿Hacer commit, push y abrir el PR ahora? [s/N] ')).trim()));
+  if (now) await deliver(ctx, result as Required<Pick<typeof result, 'branch' | 'workdir' | 'base' | 'issue' | 'plan'>> & typeof result);
+  else console.log(`Cuando quieras entregarlo: agente ship ${result.branch}`);
+}
+
+async function deliver(
+  ctx: Ctx,
+  r: { branch: string; workdir: string; base: string; issue: Issue; plan: string; verified?: boolean; runFile?: string },
+) {
+  const runStage = makeStageRunner(ctx);
+  const res = await ship({
+    root: ctx.root ?? ctx.cwd,
+    workdir: r.workdir,
+    config: ctx.config,
+    issue: r.issue,
+    plan: r.plan,
+    base: r.base,
+    branch: r.branch,
+    verified: r.verified,
+    runFile: r.runFile,
+    auto: values.ship,
+    draft: values.draft,
+    runStage,
+    mcpToolNames: Object.keys(ctx.mcp.tools),
+    createPr: makePrCreator({ method: ctx.config.workflow.pr.method, runStage, mcpToolNames: Object.keys(ctx.mcp.tools) }),
+    io: workflowIO(ctx),
+  });
+  if (!res.pushed) process.exitCode = 1;
+}
+
+async function shipCmd(ctx: Ctx) {
+  const root = ctx.root;
+  if (!root) throw new Error('Este directorio no es un repositorio git.');
+  const branch = positionals[1] ?? (await currentBranch(root));
+  const found = await findRun(root, branch);
+  if (!found) throw new Error(`No hay una ejecución de \`agente work\` registrada para la rama "${branch}".`);
+  const { rec, file } = found;
+  await deliver(ctx, { ...rec, workdir: existsSync(rec.workdir) ? rec.workdir : root, runFile: file });
 }
 
 async function work(ctx: Ctx) {

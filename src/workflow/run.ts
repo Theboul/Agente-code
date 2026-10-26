@@ -1,11 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { ModelMessage } from 'ai';
 import { buildSystemPrompt } from '../agent/system.js';
 import type { Config, Role } from '../config.js';
 import {
   addWorktree,
-  agentDir,
   branchExists,
   createBranch,
   currentBranch,
@@ -18,9 +16,11 @@ import {
 import { execCommand } from '../tools/bash.js';
 import { branchNameFor, type Issue } from './issue.js';
 import { loadPrompt } from './prompts.js';
+import { saveRun } from './runs.js';
 import { detectSetupCommands, detectVerifyCommands, runVerify } from './verify.js';
 
-export type ToolScope = 'readonly' | 'full';
+/** none: sin herramientas · readonly: leer código · mcp: solo servidores MCP · full: todo. */
+export type ToolScope = 'none' | 'readonly' | 'mcp' | 'full';
 
 /** Ejecuta un turno del agente. Lo implementa la CLI (modelos reales) o los tests (simulado). */
 export type StageRunner = (a: {
@@ -60,15 +60,17 @@ export interface WorkflowResult {
   base?: string;
   verified?: boolean;
   runFile?: string;
+  issue?: Issue;
+  plan?: string;
 }
 
 const APPROVE = /^(a|s|si|sí|y|yes|ok)$/i;
 const CANCEL = /^(x|n|no|cancelar|salir)$/i;
 const MAX_DIFF_LINES = 400;
 
-type Reply = { kind: 'approve' } | { kind: 'cancel' } | { kind: 'feedback'; text: string };
+export type Reply = { kind: 'approve' } | { kind: 'cancel' } | { kind: 'feedback'; text: string };
 
-async function decide(io: WorkflowIO, question: string, yes?: boolean): Promise<Reply> {
+export async function decide(io: WorkflowIO, question: string, yes?: boolean): Promise<Reply> {
   if (yes) return { kind: 'approve' };
   const a = (await io.ask(question)).trim();
   if (APPROVE.test(a)) return { kind: 'approve' };
@@ -204,11 +206,7 @@ export async function runWorkflow(o: WorkflowOptions): Promise<WorkflowResult> {
   return await finish('ready');
 
   async function finish(status: WorkflowStatus): Promise<WorkflowResult> {
-    const dir = join(await agentDir(root!), 'runs');
-    await mkdir(dir, { recursive: true });
-    const runFile = join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${branch.replace(/\//g, '-')}.json`);
-    const result: WorkflowResult = { status, branch, workdir, base, verified, runFile };
-    await writeFile(runFile, JSON.stringify({ ...result, issue, plan }, null, 2));
-    return result;
+    const rec = { status, branch, workdir, base, verified, issue, plan };
+    return { ...rec, runFile: await saveRun(root!, rec) };
   }
 }

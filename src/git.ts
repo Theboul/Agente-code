@@ -7,10 +7,10 @@ export interface GitResult {
   stderr: string;
 }
 
-/** Ejecuta git SIN shell (los argumentos nunca se interpretan). */
-export function git(cwd: string, args: string[]): Promise<GitResult> {
+/** Ejecuta un programa SIN shell (los argumentos nunca se interpretan). */
+export function exec(cmd: string, args: string[], cwd: string): Promise<GitResult> {
   return new Promise((res) => {
-    const child = spawn('git', args, { cwd });
+    const child = spawn(cmd, args, { cwd });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d: Buffer) => (stdout += d));
@@ -19,6 +19,8 @@ export function git(cwd: string, args: string[]): Promise<GitResult> {
     child.on('close', (code) => res({ code: code ?? 1, stdout, stderr }));
   });
 }
+
+export const git = (cwd: string, args: string[]): Promise<GitResult> => exec('git', args, cwd);
 
 export async function gitOk(cwd: string, args: string[]): Promise<string> {
   const r = await git(cwd, args);
@@ -79,4 +81,45 @@ export function slugify(text: string, max = 40): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, max)
     .replace(/-+$/, '');
+}
+
+export async function remoteUrl(cwd: string, remote: string): Promise<string | undefined> {
+  const r = await git(cwd, ['remote', 'get-url', remote]);
+  return r.code === 0 ? r.stdout.trim() : undefined;
+}
+
+/** "git@github.com:o/r.git" | "https://github.com/o/r" → { host, path: "o/r" } */
+export function parseRemote(url: string): { host: string; path: string } | undefined {
+  const m = /^(?:[\w.+-]+@|https?:\/\/(?:[^@/]+@)?|ssh:\/\/(?:[^@/]+@)?)([^:/]+)[:/](.+?)(?:\.git)?\/?$/.exec(url.trim());
+  return m ? { host: m[1]!, path: m[2]! } : undefined;
+}
+
+/** URL para abrir el PR/MR a mano en GitHub o GitLab. */
+export function compareUrl(remote: string, base: string, branch: string): string | undefined {
+  const r = parseRemote(remote);
+  if (!r) return undefined;
+  if (r.host.includes('github')) return `https://${r.host}/${r.path}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}?expand=1`;
+  if (r.host.includes('gitlab')) {
+    return `https://${r.host}/${r.path}/-/merge_requests/new?merge_request[source_branch]=${encodeURIComponent(branch)}&merge_request[target_branch]=${encodeURIComponent(base)}`;
+  }
+  return undefined;
+}
+
+const TRANSIENT = /could not resolve|timed out|connection (reset|refused|closed)|unable to access|rpc failed|early eof|the remote end hung up|\b50[234]\b/i;
+
+/** Push normal (nunca --force). Reintenta solo ante fallos de red, con espera exponencial. */
+export async function pushBranch(
+  cwd: string,
+  remote: string,
+  branch: string,
+  retries = 4,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    const r = await git(cwd, ['push', '-u', remote, branch]);
+    if (r.code === 0) return;
+    const err = (r.stderr || r.stdout).trim();
+    if (attempt >= retries || !TRANSIENT.test(err)) throw new Error(`git push falló: ${err}`);
+    await sleep(2000 * 2 ** attempt);
+  }
 }
