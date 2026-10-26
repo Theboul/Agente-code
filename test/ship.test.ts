@@ -167,14 +167,17 @@ describe('entrega: commit → push → PR → tracker', () => {
     await expect(ship({ ...base(dir), ...common, branch: 'feat/otra' })).rejects.toThrow(/Estás en/);
 
     const calls: { role: string; tools: string; prompt: string }[] = [];
+    let prTitleSeen = '';
     const res = await ship({
       ...base(dir),
       ...common,
       runStage: fakeStage(calls),
       issue: { title: 'Texto libre', body: '' },
-      createPr: async () => ({ method: 'gh', url: 'https://github.com/o/r/pull/1' }),
+      createPr: async (r) => ((prTitleSeen = r.title), { method: 'gh', url: 'https://github.com/o/r/pull/1' }),
     });
     expect(res.synced).toBeUndefined();
+    // sin clave de tracker, el título del PR es el asunto del commit y no el texto libre de la tarea
+    expect(prTitleSeen).toBe('feat: añade nuevo');
     expect(calls.some((c) => c.tools === 'mcp')).toBe(false);
   });
 

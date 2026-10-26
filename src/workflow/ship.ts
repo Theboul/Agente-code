@@ -189,7 +189,8 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
     ],
   });
   const body = sanitizeMessage(bodyReply.text);
-  const title = prTitle(issue);
+  // Con clave de tracker: "PROJ-1: título". Sin clave (texto libre) el título de la tarea puede ser un párrafo: se usa el asunto del commit.
+  const title = issue.key ? prTitle(issue) : await gitOk(workdir, ['log', '-1', '--format=%s']);
   io.say(`\nTítulo: ${title}\n\n${body}`);
   const prGo = await ask(`\n¿Abrir el PR contra ${base}?  [a]sí · [x] omitir: `);
   if (prGo.kind !== 'approve') {

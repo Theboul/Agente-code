@@ -155,7 +155,7 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
         abortSignal: ac.signal,
         onText: (d) => stream && process.stdout.write(d),
         onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
-        onToolResult: (n, o) => console.log(dim(`  ↳ ${short(o, 200)}`)),
+        onToolResult: (n, o) => console.log(dim(`  ↳ ${n}: ${short(o, 200)}`)),
       });
       if (stream) console.log();
       return { text: r.text, newMessages: r.newMessages };
@@ -308,7 +308,7 @@ async function chat(ctx: Ctx) {
         abortSignal: ac.signal,
         onText: (d) => process.stdout.write(d),
         onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
-        onToolResult: (n, o) => console.log(dim(`  ↳ ${short(o, 200)}`)),
+        onToolResult: (n, o) => console.log(dim(`  ↳ ${n}: ${short(o, 200)}`)),
       });
       history.push(...newMessages);
       console.log();
