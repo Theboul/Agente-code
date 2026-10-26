@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig, modelFor } from '../src/config.js';
 import { classifyCommand } from '../src/permissions.js';
 import { parseModelId, resolveModel } from '../src/providers.js';
-import { applyEdit, globToRegExp, safePath } from '../src/tools/fs.js';
+import { safePath } from '../src/tools/guarded.js';
 import { runCommand } from '../src/tools/bash.js';
 
 const allowed = ['git status', 'npm test', 'ls'];
@@ -26,30 +26,11 @@ describe('permisos de comandos', () => {
   });
 });
 
-describe('edición', () => {
-  it('reemplaza una única coincidencia', () => {
-    expect(applyEdit('a b c', 'b', 'X')).toBe('a X c');
-  });
-  it('falla si no existe o es ambigua', () => {
-    expect(() => applyEdit('a a', 'z', 'x')).toThrow(/no se encontró/);
-    expect(() => applyEdit('a a', 'a', 'x')).toThrow(/2 veces/);
-    expect(applyEdit('a a', 'a', 'x', true)).toBe('x x');
-  });
-  it('no interpreta $& en el reemplazo', () => {
-    expect(applyEdit('foo', 'foo', '$&bar')).toBe('$&bar');
-  });
-});
-
-describe('rutas y globs', () => {
+describe('rutas', () => {
   it('rechaza rutas fuera del proyecto', () => {
     expect(() => safePath('/tmp/p', '../x')).toThrow();
     expect(() => safePath('/tmp/p', '/etc/passwd')).toThrow();
     expect(safePath('/tmp/p', 'src/a.ts')).toBe('/tmp/p/src/a.ts');
-  });
-  it('convierte globs', () => {
-    expect(globToRegExp('src/**/*.ts').test('src/a/b.ts')).toBe(true);
-    expect(globToRegExp('src/**/*.ts').test('src/b.ts')).toBe(true);
-    expect(globToRegExp('*.ts').test('src/b.ts')).toBe(false);
   });
 });
 

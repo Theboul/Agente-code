@@ -26,7 +26,7 @@ Cada **rol** puede usar un modelo distinto (`plan` para planificar, `implement` 
 ## Seguridad
 
 - Las herramientas solo operan dentro del directorio del proyecto.
-- Editar/escribir archivos y ejecutar comandos pide confirmación, salvo la lista `allowedCommands` (solo lectura/tests) o `--yes`.
+- Editar/escribir/borrar/mover archivos y ejecutar comandos pide confirmación (con vista previa del cambio), salvo la lista `allowedCommands` (solo lectura/tests) o `--yes`.
 - Los comandos encadenados (`;`, `|`, `$()`...) siempre preguntan; `sudo` y `git push --force` están bloqueados incluso con `--yes`.
 - `AGENTE.md` (o `AGENTS.md`) en la raíz se añade al prompt como instrucciones del proyecto.
 
@@ -83,3 +83,17 @@ Después de `work` (o con `agente work ... --ship` de una vez, sin confirmacione
 Ningún commit, mensaje de PR ni comentario lleva `Co-Authored-By`, `Claude-Session` ni líneas "Generated with": se eliminan del texto del modelo por código y, si un hook de git añade una coautoría, se corrige el commit local antes del push. El autor es siempre tu `git config user.name/user.email`.
 
 Opciones en `workflow`: `remote`, `protectedBranches`, `pushRetries`, `pr.method` (`auto|gh|mcp|manual`), `pr.draft`, `sync`, `syncStatus`. Prompts editables: `commit.md`, `pr.md`, `sync.md`.
+
+## Herramientas del agente
+
+No se reescribieron: vienen de [`@openharness/core`](https://github.com/MaxGfeller/open-harness) (MIT) y este proyecto les pone por debajo un proveedor con seguridad (`src/tools/guarded.ts`: rutas limitadas al proyecto, confirmaciones y vista previa, lista blanca de comandos).
+
+| Herramienta | Origen |
+|---|---|
+| `readFile`, `writeFile`, `editFile`, `listFiles`, `grep`, `deleteFile`, `bash` | `@openharness/core` |
+| `todowrite`, `todoread` (lista de tareas, se muestra en consola) | `@openharness/core` |
+| herramientas MCP (`mcp__servidor__tool`) | `@ai-sdk/mcp` |
+| `ask_user` (el modelo te pregunta si falta información) | propia, 15 líneas |
+| `web_fetch` (lee una URL pública; bloquea redes internas; pide permiso por dominio) | propia |
+
+Ajustes sobre la librería: `editFile` escapa `$` del código nuevo (la librería lo interpretaba como patrón de `String.replace`) y exige que `oldString` sea único salvo `replaceAll`. La compactación de contexto (`contextWindow`, `compactAt`) poda resultados viejos de herramientas y luego resume; está escrita sobre el SDK v7 porque la de la librería usa su propia copia del SDK v6 y no acepta nuestros modelos.

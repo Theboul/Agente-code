@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import type { ModelMessage } from 'ai';
+import { compactIfNeeded } from './agent/compaction.js';
 import { runTurn } from './agent/loop.js';
 import { buildSystemPrompt } from './agent/system.js';
 import { loadConfig, modelFor, ROLES, type Config, type Role } from './config.js';
@@ -94,6 +95,10 @@ async function main() {
       return /^(s|si|sí|y|yes)$/i.test(a.trim());
     },
   };
+  perms.ask = async (q) => {
+    if (!process.stdin.isTTY) return undefined;
+    return rl.question(`\n❓ ${q}\n› `);
+  };
   const mcp = await connectMcpServers(config.mcpServers, perms);
   for (const s of mcp.status) if (!s.ok) console.log(`⚠ MCP ${s.name}: ${s.error}`);
 
@@ -117,6 +122,10 @@ interface Ctx {
   rl: ReturnType<typeof createInterface>;
 }
 
+const MARK: Record<string, string> = { completed: '✔', in_progress: '▶', cancelled: '✖', pending: '○' };
+const showTodos = (todos: { content: string; status: string }[]) =>
+  console.log(dim(`\n☰ Tareas\n${todos.map((t) => `  ${MARK[t.status] ?? '○'} ${t.content}`).join('\n')}`));
+
 /** Un turno del agente con salida en vivo y Ctrl+C para interrumpir. */
 function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
   return async ({ role, system, tools, workdir, messages }) => {
@@ -127,13 +136,16 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
     // Sin herramientas = redacción de commit/PR: se muestra ya sanitizado por el flujo, no el texto crudo.
     const stream = tools !== 'none';
     const toolset =
-      tools === 'none' ? {} : tools === 'readonly' ? readOnlyTools(workdir, perms) : tools === 'mcp' ? mcp.tools : { ...mcp.tools, ...nativeTools(workdir, perms) };
+      tools === 'none' ? {} : tools === 'readonly' ? readOnlyTools(workdir, perms) : tools === 'mcp' ? mcp.tools : { ...mcp.tools, ...nativeTools(workdir, perms, { onTodos: showTodos }) };
     const ac = new AbortController();
     const onSigint = () => ac.abort();
     process.once('SIGINT', onSigint);
     try {
+      const model = resolveModel(modelId, config);
+      const removed = await compactIfNeeded(messages, { model, contextWindow: config.contextWindow, ratio: config.compactAt, signal: ac.signal });
+      if (removed) console.log(dim(`⇣ Contexto compactado (${removed} mensajes resumidos)`));
       const r = await runTurn({
-        model: resolveModel(modelId, config),
+        model,
         system,
         tools: toolset,
         messages,
@@ -271,7 +283,7 @@ async function chat(ctx: Ctx) {
   const { cwd, config, perms, mcp, rl } = ctx;
   let modelId = values.model ?? modelFor(config, (values.role as Role | undefined) ?? 'implement');
   const system = await buildSystemPrompt(cwd);
-  const tools = { ...mcp.tools, ...nativeTools(cwd, perms) };
+  const tools = { ...mcp.tools, ...nativeTools(cwd, perms, { onTodos: showTodos }) };
   let history: ModelMessage[] = [];
 
   const turn = async (input: string) => {
@@ -282,8 +294,11 @@ async function chat(ctx: Ctx) {
     const onSigint = () => ac.abort();
     process.once('SIGINT', onSigint);
     try {
+      const model = resolveModel(modelId, config);
+      const removed = await compactIfNeeded(history, { model, contextWindow: config.contextWindow, ratio: config.compactAt, signal: ac.signal });
+      if (removed) console.log(dim(`⇣ Contexto compactado (${removed} mensajes resumidos)`));
       const { newMessages } = await runTurn({
-        model: resolveModel(modelId, config),
+        model,
         system,
         tools,
         messages: history,

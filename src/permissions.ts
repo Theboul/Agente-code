@@ -5,6 +5,8 @@ export type Asker = (question: string) => Promise<boolean>;
 export interface Permissions {
   /** Pide confirmación al usuario (o la deniega si no hay terminal interactivo). */
   confirm: Asker;
+  /** Pregunta abierta al usuario (herramienta ask_user). Sin terminal interactivo devuelve undefined. */
+  ask?: (question: string) => Promise<string | undefined>;
   /** Aprobar todo sin preguntar (modo --yes). */
   autoApprove: boolean;
   allowedCommands: string[];

@@ -21,6 +21,7 @@
     "@ai-sdk/mcp": "^2.0.84",
     "@ai-sdk/openai": "^4.0.102",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "@openharness/core": "^0.7.0",
     "ai": "^7.0.153",
     "zod": "^4.6.7"
   },

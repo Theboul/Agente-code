@@ -12,7 +12,7 @@ export const DEFAULT_PROMPTS: Record<PromptName, string> = {
 
 {{issue.body}}
 
-Explora el código con list_files, grep y read_file y responde con un plan en Markdown con estas secciones:
+Explora el código con listFiles, grep y readFile y responde con un plan en Markdown con estas secciones:
 ## Entendimiento — qué se pide, en una o dos frases.
 ## Archivos a tocar — lista con la ruta y qué cambia en cada uno.
 ## Pasos — ordenados y concretos.

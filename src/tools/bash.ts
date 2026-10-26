@@ -1,7 +1,4 @@
 import { spawn } from 'node:child_process';
-import { tool } from 'ai';
-import { z } from 'zod';
-import { authorize, classifyCommand, type Permissions } from '../permissions.js';
 
 const MAX_OUTPUT = 30_000;
 
@@ -43,20 +40,4 @@ export async function runCommand(cwd: string, command: string, timeoutMs: number
   const r = await execCommand(cwd, command, timeoutMs, signal);
   const status = r.timedOut ? 'señal SIGKILL' : r.code;
   return `${r.output}\n[exit ${status}]`;
-}
-
-export function bashTool(cwd: string, perms: Permissions) {
-  return tool({
-    description: 'Ejecuta un comando de shell en la raíz del proyecto (tests, git, build...). Devuelve stdout+stderr y el código de salida.',
-    inputSchema: z.object({
-      command: z.string(),
-      timeout_seconds: z.number().int().min(1).max(600).optional(),
-    }),
-    execute: async ({ command, timeout_seconds = 120 }, { abortSignal }) => {
-      const decision = classifyCommand(command, perms.allowedCommands);
-      if (decision === 'deny') return 'DENEGADO: comando bloqueado por la política de seguridad.';
-      if (!(await authorize(perms, decision, `¿Ejecutar?  $ ${command}`))) return 'DENEGADO por el usuario.';
-      return runCommand(cwd, command, timeout_seconds * 1000, abortSignal);
-    },
-  });
 }
