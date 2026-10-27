@@ -1,5 +1,5 @@
-import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test';
 import type { ModelMessage } from 'ai';
+import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { compactIfNeeded, estimateTokens } from '../src/agent/compaction.js';
 
@@ -47,7 +47,9 @@ describe('compactación de contexto', () => {
       { role: 'user', content: 'sigue' },
     ];
     let llamadas = 0;
-    const model = new MockLanguageModelV4({ doGenerate: async () => (llamadas++, { content: [], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] }) as never });
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => (llamadas++, { content: [], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] }) as never,
+    });
     const antes = estimateTokens(msgs);
     expect(await compactIfNeeded(msgs, { model, contextWindow: 8_000, ratio: 0.75 })).toBe(0);
     expect(estimateTokens(msgs)).toBeLessThan(antes / 3);

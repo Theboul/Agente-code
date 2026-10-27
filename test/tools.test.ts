@@ -1,7 +1,7 @@
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test';
+import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { runTurn } from '../src/agent/loop.js';
 import type { Permissions } from '../src/permissions.js';
@@ -97,7 +97,12 @@ describe('herramientas de @openharness/core con nuestra seguridad', () => {
     const { perms } = setup();
     const seen: string[][] = [];
     const tools = nativeTools(process.cwd(), perms, { onTodos: (t) => seen.push(t.map((x) => `${x.status}:${x.content}`)) }) as Record<string, unknown>;
-    await run(tools, 'todowrite', { todos: [{ content: 'paso 1', status: 'in_progress', priority: 'medium' }, { content: 'paso 2', status: 'pending', priority: 'medium' }] });
+    await run(tools, 'todowrite', {
+      todos: [
+        { content: 'paso 1', status: 'in_progress', priority: 'medium' },
+        { content: 'paso 2', status: 'pending', priority: 'medium' },
+      ],
+    });
     expect(seen).toEqual([['in_progress:paso 1', 'pending:paso 2']]);
     const back = (await run(tools, 'todoread', {})) as { todos: unknown[] };
     expect(back.todos).toHaveLength(2);
@@ -131,7 +136,12 @@ describe('ask_user y web_fetch', () => {
     const asked: string[] = [];
     const perms: Permissions = { autoApprove: false, allowedCommands: [], confirm: async (q) => (asked.push(q), true) };
     let calls = 0;
-    const fake = (async () => (calls++, new Response('<html><head><style>x{}</style></head><body><h1>Hola</h1><p>a &amp; b</p><script>mal()</script></body></html>', { headers: { 'content-type': 'text/html' } }))) as typeof fetch;
+    const fake = (async () => (
+      calls++,
+      new Response('<html><head><style>x{}</style></head><body><h1>Hola</h1><p>a &amp; b</p><script>mal()</script></body></html>', {
+        headers: { 'content-type': 'text/html' },
+      })
+    )) as typeof fetch;
     const tool = webFetchTool(perms, fake);
     expect(await run({ t: tool }, 't', { url: 'http://localhost:3000/x' })).toMatchObject({ error: expect.stringContaining('bloqueado') });
     expect(await run({ t: tool }, 't', { url: 'file:///etc/passwd' })).toMatchObject({ error: expect.any(String) });
@@ -170,7 +180,14 @@ describe('compatibilidad: herramientas de la librería (SDK v6) dentro de nuestr
       },
     });
     const out: string[] = [];
-    const r = await runTurn({ model, system: 's', tools: tools as never, messages: [{ role: 'user', content: 'lee' }], maxSteps: 4, onToolResult: (name) => out.push(name) });
+    const r = await runTurn({
+      model,
+      system: 's',
+      tools: tools as never,
+      messages: [{ role: 'user', content: 'lee' }],
+      maxSteps: 4,
+      onToolResult: (name) => out.push(name),
+    });
     expect(out).toEqual(['readFile']);
     expect(r.text).toBe('vi el contenido');
     void dir;

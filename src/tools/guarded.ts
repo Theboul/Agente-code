@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { NodeFsProvider, type FsProvider, type ShellProvider, type ShellResult } from '@openharness/core';
+import { type FsProvider, NodeFsProvider, type ShellProvider, type ShellResult } from '@openharness/core';
 import { authorize, classifyCommand, type Permissions } from '../permissions.js';
 import { execCommand } from './bash.js';
 
@@ -27,7 +27,10 @@ export function previewChange(oldText: string | undefined, newText: string): str
     endB--;
   }
   const fmt = (sign: string, lines: string[]) =>
-    lines.slice(0, MAX_PREVIEW_LINES).map((l) => `${sign} ${l.slice(0, 160)}`).concat(lines.length > MAX_PREVIEW_LINES ? [`${sign} …(+${lines.length - MAX_PREVIEW_LINES} líneas)`] : []);
+    lines
+      .slice(0, MAX_PREVIEW_LINES)
+      .map((l) => `${sign} ${l.slice(0, 160)}`)
+      .concat(lines.length > MAX_PREVIEW_LINES ? [`${sign} …(+${lines.length - MAX_PREVIEW_LINES} líneas)`] : []);
   const out = [...fmt('-', a.slice(start, endA)), ...fmt('+', b.slice(start, endB))];
   return out.length ? `desde la línea ${start + 1}:\n${out.join('\n')}` : 'sin cambios';
 }

@@ -2,17 +2,7 @@ import { join, resolve } from 'node:path';
 import type { ModelMessage } from 'ai';
 import { buildSystemPrompt } from '../agent/system.js';
 import type { Config, Role } from '../config.js';
-import {
-  addWorktree,
-  branchExists,
-  createBranch,
-  currentBranch,
-  defaultWorktreeDir,
-  fullDiff,
-  hasCommits,
-  isClean,
-  repoRoot,
-} from '../git.js';
+import { addWorktree, branchExists, createBranch, currentBranch, defaultWorktreeDir, fullDiff, hasCommits, isClean, repoRoot } from '../git.js';
 import { execCommand } from '../tools/bash.js';
 import { branchNameFor, type Issue } from './issue.js';
 import { loadPrompt } from './prompts.js';
@@ -140,9 +130,7 @@ export async function runWorkflow(o: WorkflowOptions): Promise<WorkflowResult> {
   io.say(verifyCommands.length ? `Verificación: ${verifyCommands.join(' → ')}` : 'Verificación: ninguna (define workflow.verify en la config).');
 
   const implSystem = await buildSystemPrompt(workdir);
-  const history: ModelMessage[] = [
-    { role: 'user', content: await loadPrompt(root, 'implement', { ...ctx, plan, branch }) },
-  ];
+  const history: ModelMessage[] = [{ role: 'user', content: await loadPrompt(root, 'implement', { ...ctx, plan, branch }) }];
   const step = async () => {
     const r = await o.runStage({ role: 'implement', system: implSystem, tools: 'full', workdir, messages: history });
     history.push(...r.newMessages);

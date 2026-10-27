@@ -35,12 +35,7 @@ export async function ghReady(cwd: string): Promise<boolean> {
 }
 
 /** Elige el método: gh autenticado → herramienta MCP de PR → enlace manual. */
-export function makePrCreator(o: {
-  method: PrMethod;
-  runStage: StageRunner;
-  mcpToolNames: string[];
-  ghReady?: (cwd: string) => Promise<boolean>;
-}): PrCreator {
+export function makePrCreator(o: { method: PrMethod; runStage: StageRunner; mcpToolNames: string[]; ghReady?: (cwd: string) => Promise<boolean> }): PrCreator {
   return async (req) => {
     let method = o.method;
     if (method === 'auto') {

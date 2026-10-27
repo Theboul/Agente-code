@@ -26,8 +26,7 @@ export function expandEnv(value: string, env: NodeJS.ProcessEnv = process.env): 
   });
 }
 
-const expandRecord = (r: Record<string, string>, env?: NodeJS.ProcessEnv) =>
-  Object.fromEntries(Object.entries(r).map(([k, v]) => [k, expandEnv(v, env)]));
+const expandRecord = (r: Record<string, string>, env?: NodeJS.ProcessEnv) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, expandEnv(v, env)]));
 
 /** Nombre expuesto al modelo: mcp__servidor__herramienta, solo [a-zA-Z0-9_-] y máx. 64 caracteres. */
 export function toolName(server: string, tool: string): string {
@@ -83,11 +82,7 @@ function cleanEnv(): Record<string, string> {
 }
 
 /** Conecta todos los servidores en paralelo; un servidor caído no impide usar el resto. */
-export async function connectMcpServers(
-  servers: Record<string, McpServerConfig>,
-  perms: Permissions,
-  timeoutMs = 20_000,
-): Promise<McpConnections> {
+export async function connectMcpServers(servers: Record<string, McpServerConfig>, perms: Permissions, timeoutMs = 20_000): Promise<McpConnections> {
   const entries = Object.entries(servers).filter(([, c]) => c.enabled);
   const clients: MCPClient[] = [];
   const tools: ToolSet = {};

@@ -1,6 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
 import type { Config } from '../config.js';
 import { agentDir, git, gitOk, pushBranch, remoteUrl } from '../git.js';
 import type { Issue } from './issue.js';
@@ -128,7 +128,12 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
       });
       message = sanitizeMessage(r.text);
       if (!message) throw new Error('El modelo no generó un mensaje de commit.');
-      io.say(`\nMensaje de commit:\n${message.split('\n').map((l) => `  │ ${l}`).join('\n')}`);
+      io.say(
+        `\nMensaje de commit:\n${message
+          .split('\n')
+          .map((l) => `  │ ${l}`)
+          .join('\n')}`,
+      );
       const reply = await ask('\n¿Confirmar con este mensaje?  [a]probar · [x] cancelar · o escribe cómo cambiarlo: ');
       if (reply.kind === 'approve') break;
       if (reply.kind === 'cancel') {
@@ -203,7 +208,9 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
     result.prUrl = pr.url;
     io.say(`✓ PR (${pr.method}): ${pr.url}`);
   } else {
-    io.say(`No se pudo crear el PR automáticamente (no hay gh autenticado ni herramienta MCP).\n  Ábrelo aquí: ${pr.manualUrl ?? '(no se reconoce el remoto)'}\n  Descripción lista en: ${pr.bodyFile}`);
+    io.say(
+      `No se pudo crear el PR automáticamente (no hay gh autenticado ni herramienta MCP).\n  Ábrelo aquí: ${pr.manualUrl ?? '(no se reconoce el remoto)'}\n  Descripción lista en: ${pr.bodyFile}`,
+    );
   }
 
   // ── 4. SINCRONIZAR CON EL TRACKER ───────────────────────────────────────────
@@ -221,7 +228,9 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
             content: await loadPrompt(o.root, 'sync', {
               ...ctx,
               'pr.url': result.prUrl,
-              'sync.status': wf.syncStatus ? `Mueve la issue al estado "${wf.syncStatus}" (busca la transición equivalente).` : 'No cambies el estado de la issue.',
+              'sync.status': wf.syncStatus
+                ? `Mueve la issue al estado "${wf.syncStatus}" (busca la transición equivalente).`
+                : 'No cambies el estado de la issue.',
             }),
           },
         ],

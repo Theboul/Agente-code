@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { compareUrl, parseRemote, pushBranch } from '../src/git.js';
 import { hasMcpPrTool, makePrCreator, type PrCreator } from '../src/workflow/pr.js';
-import { findRun, saveRun } from '../src/workflow/runs.js';
 import type { StageRunner } from '../src/workflow/run.js';
+import { findRun, saveRun } from '../src/workflow/runs.js';
 import { hasAttribution, issueClosesLine, prTitle, sanitizeMessage, ship } from '../src/workflow/ship.js';
 
 const sh = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();

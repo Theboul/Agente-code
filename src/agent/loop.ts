@@ -1,4 +1,4 @@
-import { stepCountIs, streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
 
 export interface TurnOptions {
   model: LanguageModel;
@@ -139,7 +139,9 @@ export function retryDelayMs(e: unknown, attempt: number): number {
  * Ejecuta un turno; ante errores temporales del proveedor lo repite esperando lo que indique el proveedor o 2s, 4s, 8s…
  * Si el turno ya había completado pasos (herramientas ejecutadas), el reintento continúa desde ahí: no se repiten.
  */
-export async function runTurn(opts: TurnOptions & { retries?: number; sleep?: (ms: number) => Promise<void>; onRetry?: (n: number, e: unknown, waitMs: number) => void }): Promise<TurnResult> {
+export async function runTurn(
+  opts: TurnOptions & { retries?: number; sleep?: (ms: number) => Promise<void>; onRetry?: (n: number, e: unknown, waitMs: number) => void },
+): Promise<TurnResult> {
   const retries = opts.retries ?? 3;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   // Pasos ya completados en intentos fallidos: el reintento continúa desde ahí en vez de repetirlos.

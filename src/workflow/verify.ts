@@ -21,9 +21,7 @@ function scripts(cwd: string): Record<string, string> {
 export function detectVerifyCommands(cwd: string): string[] {
   const s = scripts(cwd);
   const run = runner(cwd);
-  const out = ['lint', 'typecheck', 'test']
-    .filter((n) => s[n] && !/no test specified/.test(s[n]!))
-    .map((n) => `${run} ${n}`);
+  const out = ['lint', 'typecheck', 'test'].filter((n) => s[n] && !/no test specified/.test(s[n]!)).map((n) => `${run} ${n}`);
   if (out.length) return out;
   if (existsSync(join(cwd, 'Cargo.toml'))) return ['cargo test'];
   if (existsSync(join(cwd, 'go.mod'))) return ['go test ./...'];

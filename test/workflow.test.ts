@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { currentBranch, slugify } from '../src/git.js';
 import { branchNameFor, classifyRef, extractJson, issueFromText } from '../src/workflow/issue.js';
-import { renderTemplate, loadPrompt } from '../src/workflow/prompts.js';
+import { loadPrompt, renderTemplate } from '../src/workflow/prompts.js';
 import { runWorkflow, type StageRunner } from '../src/workflow/run.js';
 import { detectSetupCommands, detectVerifyCommands } from '../src/workflow/verify.js';
 
@@ -68,8 +68,7 @@ describe('piezas del flujo', () => {
 
 describe('flujo completo (modelo simulado, repo git real)', () => {
   const checker = `const fs=require('fs');process.exit(fs.existsSync('feature.txt')&&fs.readFileSync('feature.txt','utf8')==='ok'?0:1)`;
-  const repo = () =>
-    tempRepo({ 'package.json': JSON.stringify({ scripts: { test: 'node check.js' } }), 'check.js': checker, '.gitignore': 'node_modules\n' });
+  const repo = () => tempRepo({ 'package.json': JSON.stringify({ scripts: { test: 'node check.js' } }), 'check.js': checker, '.gitignore': 'node_modules\n' });
 
   const scripted = (answers: string[]) => {
     const log: string[] = [];
@@ -132,7 +131,14 @@ describe('flujo completo (modelo simulado, repo git real)', () => {
   it('rechaza árbol sucio en modo rama y funciona en worktree', async () => {
     const dir = repo();
     writeFileSync(join(dir, 'README.md'), 'sucio');
-    const base = { cwd: dir, noVerify: true, yes: true, issue: { title: 'W', body: '' }, runStage: async () => ({ text: 'p', newMessages: [] }), io: scripted([]).io };
+    const base = {
+      cwd: dir,
+      noVerify: true,
+      yes: true,
+      issue: { title: 'W', body: '' },
+      runStage: async () => ({ text: 'p', newMessages: [] }),
+      io: scripted([]).io,
+    };
     await expect(runWorkflow({ ...base, config: await loadConfig(dir) })).rejects.toThrow(/sin confirmar/);
 
     const res = await runWorkflow({
@@ -154,7 +160,13 @@ describe('flujo completo (modelo simulado, repo git real)', () => {
   it('falla con claridad fuera de un repo git', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'nogit-'));
     await expect(
-      runWorkflow({ cwd: dir, config: await loadConfig(dir), issue: { title: 'x', body: '' }, runStage: async () => ({ text: '', newMessages: [] }), io: scripted([]).io }),
+      runWorkflow({
+        cwd: dir,
+        config: await loadConfig(dir),
+        issue: { title: 'x', body: '' },
+        runStage: async () => ({ text: '', newMessages: [] }),
+        io: scripted([]).io,
+      }),
     ).rejects.toThrow(/repositorio git/);
   });
 });

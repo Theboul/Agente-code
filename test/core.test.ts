@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig, modelFor } from '../src/config.js';
 import { classifyCommand } from '../src/permissions.js';
 import { parseModelId, resolveModel } from '../src/providers.js';
-import { safePath } from '../src/tools/guarded.js';
 import { runCommand } from '../src/tools/bash.js';
+import { safePath } from '../src/tools/guarded.js';
 
 const allowed = ['git status', 'npm test', 'ls'];
 

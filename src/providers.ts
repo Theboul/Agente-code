@@ -33,9 +33,7 @@ export function resolveModel(id: string, config: Config): LanguageModel {
       return createOpenAI({ baseURL: pc.baseURL ?? 'http://localhost:11434/v1', apiKey: apiKey ?? 'ollama' }).chat(model);
     default:
       if (pc.baseURL) return createOpenAI({ baseURL: pc.baseURL, apiKey: apiKey ?? 'none' }).chat(model);
-      throw new Error(
-        `Proveedor desconocido "${provider}". Usa google, anthropic, openai, ollama o defínelo en ${'agente.config.json'} con "baseURL".`,
-      );
+      throw new Error(`Proveedor desconocido "${provider}". Usa google, anthropic, openai, ollama o defínelo en ${'agente.config.json'} con "baseURL".`);
   }
 }
 
