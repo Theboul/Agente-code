@@ -51,7 +51,7 @@ export class GuardedFsProvider extends NodeFsProvider implements FsProvider {
   }
 
   private rel(p: string) {
-    return relative(this.root, this.resolvePath(p)) || '.';
+    return (relative(this.root, this.resolvePath(p)) || '.').split(sep).join('/');
   }
 
   override async writeFile(p: string, content: string): Promise<void> {

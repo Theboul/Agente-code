@@ -22,6 +22,8 @@ export function execCommand(cwd: string, command: string, timeoutMs: number, sig
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
+      // En Windows los procesos hijos mantienen abiertas las tuberías y "close" tarda en llegar: no esperarlo.
+      resolve({ code: null, output: out.slice(0, MAX_OUTPUT), timedOut });
     }, timeoutMs);
     child.on('error', (e) => {
       clearTimeout(timer);

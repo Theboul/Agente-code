@@ -1,6 +1,6 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, modelFor } from '../src/config.js';
 import { classifyCommand } from '../src/permissions.js';
@@ -30,7 +30,7 @@ describe('rutas', () => {
   it('rechaza rutas fuera del proyecto', () => {
     expect(() => safePath('/tmp/p', '../x')).toThrow();
     expect(() => safePath('/tmp/p', '/etc/passwd')).toThrow();
-    expect(safePath('/tmp/p', 'src/a.ts')).toBe('/tmp/p/src/a.ts');
+    expect(safePath('/tmp/p', 'src/a.ts')).toBe(resolve('/tmp/p', 'src/a.ts'));
   });
 });
 
