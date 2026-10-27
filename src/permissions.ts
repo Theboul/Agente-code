@@ -12,15 +12,71 @@ export interface Permissions {
   allowedCommands: string[];
 }
 
-const DENY_PATTERNS = [/\bgit\s+push\b.*--force\b/, /\bgit\s+push\b.*\s-f\b/, /\brm\s+-rf?\s+\/(\s|$)/, /\bsudo\b/];
+// Bloqueados siempre, incluso con --yes (ver `forbidden`).
+const DENY_PATTERNS = [
+  /\b(sudo|doas)\b/,
+  /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(ba|z|da|k|c)?sh\b/,
+  /\bmkfs(\.\w+)?\b/,
+  /\bdd\b[^\n]*\bof=\/dev\/(?!null\b)/,
+  /\b(shutdown|reboot|poweroff)\b/,
+  /:\(\)\s*\{/,
+];
+// Tras `git ... push`: fuerza, espejo, borrado remoto, refspec con "+" o ":rama".
+const PUSH_DESTRUCTIVE = /(^|\s)(--force\S*|--mirror|--delete|-[a-zA-Z]*f[a-zA-Z]*|\+\S+|:\S+)(?=\s|$)/;
+// Destinos de `rm -r` que borran el sistema, el home o el propio proyecto.
+const RM_DANGEROUS_TARGET = /^(\/\*?|~\/?\*?|\$\{?HOME\}?\/?\*?|\.{1,2}\/?\*?|[a-zA-Z]:[\\/]?\*?)$/;
 // Operadores de shell que permiten encadenar otro comando tras uno "permitido".
 const CHAINING = /[;&|`$()<>\n]/;
 
+// Opciones que escriben archivos, ejecutan programas o cambian de directorio aunque el prefijo esté permitido.
+const UNSAFE_FLAG =
+  /^(--output|--ext-diff|--textconv|--no-index|--open-files-in-pager|--script-shell|--prefix|--userconfig|--globalconfig|--registry|--cache)(=|$)|^-O/;
+// Archivos con secretos que un comando "de solo lectura" no debe leer sin confirmación.
+const SENSITIVE =
+  /(^|[\\/])(\.env(?!\.(example|sample|template)$)(\.[^\\/]*)?|id_(rsa|dsa|ecdsa|ed25519)[^\\/]*|\.npmrc|\.netrc|\.pgpass|credentials)$|\.(pem|key|p12|pfx)$|[\\/]\.(ssh|aws|gnupg)([\\/]|$)/i;
+
+function pushIsDestructive(text: string): boolean {
+  const m = /\bgit\b[^;&|\n]*\bpush\b/.exec(text);
+  return !!m && PUSH_DESTRUCTIVE.test(text.slice(m.index + m[0].length));
+}
+
+function rmIsDangerous(text: string): boolean {
+  const tokens = text.split(/[\s;&|()`]+/);
+  return tokens.some((t, i) => {
+    if (t !== 'rm' && !t.endsWith('/rm')) return false;
+    const args: string[] = [];
+    for (const a of tokens.slice(i + 1)) {
+      if (a === 'rm' || a.endsWith('/rm')) break;
+      args.push(a);
+    }
+    const recursive = args.some((a) => a === '--recursive' || /^-[a-zA-Z]*[rR][a-zA-Z]*$/.test(a));
+    return recursive && args.some((a) => !a.startsWith('-') && RM_DANGEROUS_TARGET.test(a));
+  });
+}
+
+/** Comandos que nunca se ejecutan. Se evalúa también sin comillas ni barras para vencer `su""do`, `s\udo`… */
+function forbidden(text: string): boolean {
+  return DENY_PATTERNS.some((r) => r.test(text)) || pushIsDestructive(text) || rmIsDangerous(text);
+}
+
+function escapesProject(arg: string): boolean {
+  return /^[\\/~]/.test(arg) || /^[a-zA-Z]:/.test(arg) || /(^|[\\/])\.\.($|[\\/])/.test(arg);
+}
+
+/** Argumento que saca a un comando permitido de su uso de solo lectura dentro del proyecto. */
+function unsafeArg(raw: string): boolean {
+  const arg = raw.replace(/^['"]|['"]$/g, '');
+  const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
+  if (UNSAFE_FLAG.test(arg)) return true;
+  return [arg, value].some((a) => escapesProject(a) || SENSITIVE.test(a));
+}
+
 export function classifyCommand(command: string, allowed: string[]): Decision {
   const cmd = command.trim();
-  if (DENY_PATTERNS.some((r) => r.test(cmd))) return 'deny';
+  if (forbidden(cmd) || forbidden(cmd.replace(/['"\\]/g, ''))) return 'deny';
   if (CHAINING.test(cmd)) return 'ask';
-  return allowed.some((p) => cmd === p || cmd.startsWith(p + ' ')) ? 'allow' : 'ask';
+  if (!allowed.some((p) => cmd === p || cmd.startsWith(`${p} `))) return 'ask';
+  return cmd.split(/\s+/).slice(1).some(unsafeArg) ? 'ask' : 'allow';
 }
 
 export async function authorize(perms: Permissions, decision: Decision, question: string): Promise<boolean> {

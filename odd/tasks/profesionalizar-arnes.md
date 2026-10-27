@@ -10,9 +10,10 @@
 - [x] T2 `AGENTE.md`, `LICENSE` (MIT) y `.gitignore` (.codegraph, agente.config.json, .atl) (commit e923add)
 - [x] T3 CI en GitHub Actions: lint, typecheck, test en Linux y Windows (commit 13ef185)
 - [x] T4 README: instalación global (`npm link`), requisito de Git Bash en Windows, `gh`/MCP para PR (commit 13ef185)
+- [x] T5 Endurecer classifyCommand con tests adversariales (deny, ask, allow)
 
 ## Verificación
 `npm run lint` · `npm run typecheck` · `npm test`
 
 ## Progreso
-T1-T4 completas. lint, typecheck y 50 tests verificados. Siguiente: tests adversariales de classifyCommand, dividir cli.ts, prueba de punta a punta.
+T1-T4 completas. T5 (endurecer classifyCommand) hecha: 72 tests adversariales, 122 en total. Pendiente: avisos de la revisión (permissions en ci.yml, tests del timeout y de rel()), dividir cli.ts, prueba de punta a punta.
