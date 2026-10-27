@@ -29,6 +29,7 @@ const RM_DANGEROUS_TARGET = /^(\/\*?|~\/?\*?|\$\{?HOME\}?\/?\*?|\.{1,2}\/?\*?|[a
 const CHAINING = /[;&|`$()<>\n]/;
 
 // Opciones que escriben archivos, ejecutan programas o cambian de directorio aunque el prefijo esté permitido.
+// `-O…` cubre `git diff -O<archivo>` (lee un archivo de órdenes) y `-O` de curl/wget (escribe a disco).
 const UNSAFE_FLAG =
   /^(--output|--ext-diff|--textconv|--no-index|--open-files-in-pager|--script-shell|--prefix|--userconfig|--globalconfig|--registry|--cache)(=|$)|^-O/;
 // Archivos con secretos que un comando "de solo lectura" no debe leer sin confirmación.
@@ -63,12 +64,67 @@ function escapesProject(arg: string): boolean {
   return /^[\\/~]/.test(arg) || /^[a-zA-Z]:/.test(arg) || /(^|[\\/])\.\.($|[\\/])/.test(arg);
 }
 
-/** Argumento que saca a un comando permitido de su uso de solo lectura dentro del proyecto. */
+// Nombres de ejemplo de archivos y carpetas con secretos: un comodín que pueda coincidir con alguno pregunta.
+const SECRET_FILES = ['.env', '.env.local', 'id_rsa', 'id_ed25519', 'server.pem', 'private.key', '.npmrc', '.netrc', '.pgpass', 'credentials'];
+const SECRET_DIRS = ['.ssh', '.aws', '.gnupg'];
+const GLOB_CHARS = /[*?[{]/;
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+/** Convierte un patrón del shell (`*`, `?`, `[a-c]`, `{a,b}`) en expresión regular, para un único segmento de ruta. */
+function globToRegExp(glob: string): RegExp {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]!;
+    const close = c === '[' ? glob.indexOf(']', i + 2) : c === '{' ? glob.indexOf('}', i + 1) : -1;
+    if (c === '*') re += '.*';
+    else if (c === '?') re += '.';
+    else if (c === '[' && close > 0) {
+      re += `[${glob
+        .slice(i + 1, close)
+        .replace(/^!/, '^')
+        .replace(/\\/g, '\\\\')}]`;
+      i = close;
+    } else if (c === '{' && close > 0) {
+      re += `(?:${glob
+        .slice(i + 1, close)
+        .split(',')
+        .map(escapeRegExp)
+        .join('|')})`;
+      i = close;
+    } else re += escapeRegExp(c);
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** ¿Puede este segmento con comodines coincidir con alguno de los nombres? `*`, `?` y `[...]` al inicio no cubren archivos ocultos. */
+function globHits(segment: string, names: string[]): boolean {
+  if (!GLOB_CHARS.test(segment)) return false;
+  const re = globToRegExp(segment);
+  const hidesDotfiles = /^[*?[]/.test(segment) && !segment.includes('{');
+  return names.some((n) => re.test(n) && !(hidesDotfiles && n.startsWith('.')));
+}
+
+function globReachesSecrets(path: string): boolean {
+  const segments = path.split(/[\\/]/).filter(Boolean);
+  const last = segments.pop();
+  return segments.some((s) => globHits(s, SECRET_DIRS)) || (last !== undefined && globHits(last, [...SECRET_FILES, ...SECRET_DIRS]));
+}
+
+/**
+ * Argumento que saca a un comando permitido de su uso de solo lectura dentro del proyecto.
+ * Se evalúa tal como lo vería el shell: sin comillas (`.e"n"v` es `.env`) y también sin barras invertidas (`.e\nv`),
+ * y los comodines que podrían alcanzar secretos (`.e[n]v`, `.e*`, `*.pem`) cuentan como sospechosos.
+ */
 function unsafeArg(raw: string): boolean {
-  const arg = raw.replace(/^['"]|['"]$/g, '');
-  const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
-  if (UNSAFE_FLAG.test(arg)) return true;
-  return [arg, value].some((a) => escapesProject(a) || SENSITIVE.test(a));
+  const sinComillas = raw.replace(/['"]/g, '');
+  const variants = new Set([sinComillas, sinComillas.replace(/\\/g, '')]);
+  for (const arg of variants) {
+    if (UNSAFE_FLAG.test(arg)) return true;
+    const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
+    if ([arg, value].some((a) => escapesProject(a) || SENSITIVE.test(a) || globReachesSecrets(a))) return true;
+  }
+  return false;
 }
 
 export function classifyCommand(command: string, allowed: string[]): Decision {

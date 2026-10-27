@@ -54,7 +54,7 @@ Cada **rol** puede usar un modelo distinto (`plan` para planificar, `implement` 
 - Editar/escribir/borrar/mover archivos y ejecutar comandos pide confirmación (con vista previa del cambio), salvo la lista `allowedCommands` (solo lectura/tests) o `--yes`.
 - Los comandos encadenados (`;`, `|`, `$()`...) siempre preguntan.
 - Bloqueados incluso con `--yes`: `sudo`/`doas` (también ofuscados con comillas o barras), `git push` forzado, con `+rama`, `--mirror` o `--delete` (aunque haya opciones globales como `git -C . push`), `rm -r` sobre `/`, `~`, `$HOME`, `.` o `..`, `curl | sh`, `mkfs`, `dd of=/dev/…` y `shutdown`.
-- Un comando de la lista blanca pregunta igualmente si apunta fuera del proyecto (`/`, `~`, `..`), a archivos con secretos (`.env`, `*.pem`, `id_rsa`, `.ssh`…) o usa opciones que escriben o ejecutan (`--output`, `--ext-diff`, `--script-shell`, `--prefix`…).
+- Un comando de la lista blanca pregunta igualmente si apunta fuera del proyecto (`/`, `~`, `..`), a archivos con secretos (`.env`, `*.pem`, `id_rsa`, `.ssh`…) o usa opciones que escriben o ejecutan (`--output`, `--ext-diff`, `--script-shell`, `--prefix`…). Se evalúa como lo ve el shell: `.e"n"v` es `.env` y los comodines que puedan alcanzar secretos (`.e[n]v`, `.e*`, `*.pem`) también preguntan.
 - Límite conocido: la clasificación es por texto, no interpreta el shell completo. Con `--yes` se aprueba todo lo que no está bloqueado, así que no lo uses con modelos o repositorios que no controlas.
 - `AGENTE.md` (o `AGENTS.md`) en la raíz se añade al prompt como instrucciones del proyecto.
 

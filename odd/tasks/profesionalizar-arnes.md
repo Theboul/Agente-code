@@ -12,9 +12,10 @@
 - [x] T4 README: instalación global (`npm link`), requisito de Git Bash en Windows, `gh`/MCP para PR (commit 13ef185)
 - [x] T5 Endurecer classifyCommand con tests adversariales (deny, ask, allow)
 - [x] T6 Avisos de la revisión: permissions en CI, tests del timeout de bash y de rel()
+- [x] T7 Cerrar bypass de comillas y comodines en la guía de lectura de permissions.ts
 
 ## Verificación
 `npm run lint` · `npm run typecheck` · `npm test`
 
 ## Progreso
-T1-T6 completas (127 tests, lint y typecheck verificados; tres revisiones aprobadas). Pendiente: cerrar el bypass de comillas y globs en la guía de lectura, reforzar el test del cierre tardío, dividir cli.ts y la prueba de punta a punta.
+T1-T6 completas (127 tests, lint y typecheck verificados; tres revisiones aprobadas). T7 hecha (157 tests). Pendiente: falsos positivos de shutdown/reboot, reforzar el test del cierre tardío, dividir cli.ts y la prueba de punta a punta.
