@@ -4,6 +4,31 @@ Arnés de código para la consola: multi-modelo, con herramientas de archivos y 
 
 **Estado:** hitos 1 a 4 listos: del issue al PR y la sincronización con el tracker.
 
+## Requisitos
+
+- Node.js 20 o superior y git.
+- **Windows:** el agente ejecuta los comandos con `bash`, así que necesita [Git for Windows](https://git-scm.com/download/win) (Git Bash) en el `PATH`.
+- Para abrir PR automáticamente: [`gh`](https://cli.github.com) autenticado (`gh auth login`) o un servidor MCP de GitHub. Sin ninguno de los dos, `ship` deja el enlace y la descripción para abrirlo a mano.
+- Una clave de modelo en el entorno: `GOOGLE_GENERATIVE_AI_API_KEY`, `ANTHROPIC_API_KEY` u `OPENAI_API_KEY`. Nunca la guardes en `agente.config.json`.
+
+## Instalación como comando
+
+```bash
+npm install && npm run build
+npm link        # deja el comando `agente` disponible en cualquier directorio
+agente --help
+```
+
+## Desarrollo
+
+```bash
+npm run lint       # Biome: lint y formato (npm run format aplica correcciones)
+npm run typecheck
+npm test
+```
+
+La integración continua (`.github/workflows/ci.yml`) ejecuta lo mismo en Linux y Windows. Las reglas del proyecto están en `AGENTE.md`.
+
 ## Uso
 
 ```bash
