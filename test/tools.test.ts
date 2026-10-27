@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { runTurn } from '../src/agent/loop.js';
 import type { Permissions } from '../src/permissions.js';
 import { askUserTool, htmlToText, isBlockedHost, webFetchTool } from '../src/tools/extra.js';
-import { previewChange } from '../src/tools/guarded.js';
+import { GuardedFsProvider, previewChange } from '../src/tools/guarded.js';
 import { nativeTools, readOnlyTools } from '../src/tools/index.js';
 
 const opts = { toolCallId: 't', messages: [] } as never;
@@ -26,6 +26,26 @@ function setup(answer = true, extra: Partial<Permissions> = {}) {
   };
   return { dir, asked, perms, tools: nativeTools(dir, perms) as Record<string, unknown> };
 }
+
+describe('rutas en las confirmaciones (rel)', () => {
+  it('siempre se muestran relativas al proyecto y con "/", sea cual sea el separador del sistema', async () => {
+    const { dir, asked, perms } = setup(true);
+    mkdirSync(join(dir, 'src', 'sub'));
+    const fs = new GuardedFsProvider(dir, perms);
+    await fs.writeFile(join('src', 'sub', 'n.js'), 'x');
+    await fs.rename(join('src', 'sub', 'n.js'), join('src', 'b.js'));
+    await fs.remove(join('src', 'b.js'));
+    expect(asked[0]).toContain('¿Escribir src/sub/n.js?');
+    expect(asked[1]).toBe('¿Mover src/sub/n.js → src/b.js?');
+    expect(asked[2]).toBe('¿BORRAR src/b.js?');
+    expect(asked.some((q) => q.includes('\\'))).toBe(false);
+  });
+  it('la raíz del proyecto se muestra como "."', async () => {
+    const { dir, asked, perms } = setup(false);
+    await new GuardedFsProvider(dir, perms).remove('.', { recursive: true }).catch(() => {});
+    expect(asked[0]).toBe('¿BORRAR . (recursivo)?');
+  });
+});
 
 describe('herramientas de @openharness/core con nuestra seguridad', () => {
   it('lee y busca sin pedir confirmación', async () => {
