@@ -21,7 +21,18 @@ export interface TurnResult {
 }
 
 /** Ejecuta un turno completo del bucle agéntico: modelo → herramientas → modelo… hasta terminar. */
+/** Error de un turno que ya completó pasos: lleva los mensajes de esos pasos para no repetirlos al reintentar. */
+class PartialTurnError extends Error {
+  constructor(
+    readonly original: unknown,
+    readonly partial: ModelMessage[],
+  ) {
+    super(original instanceof Error ? original.message : String(original));
+  }
+}
+
 async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
+  const done: ModelMessage[] = [];
   // Vigilante de inactividad: se reinicia con cada fragmento recibido del modelo. El tiempo que
   // tardan las herramientas (tests, shell) no cuenta porque entonces no se espera al modelo.
   const ac = new AbortController();
@@ -46,6 +57,7 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
     tools: opts.tools,
     stopWhen: stepCountIs(opts.maxSteps),
     abortSignal: ac.signal,
+    onStepFinish: (step) => void done.push(...((step.response.messages ?? []) as ModelMessage[])),
     onError: () => {}, // los errores se tratan abajo; evita el volcado por defecto del SDK
   });
 
@@ -76,8 +88,8 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
     }
     newMessages = (await result.responseMessages) as ModelMessage[];
   } catch (e) {
-    if (timedOut) throw new Error(`El modelo no respondió en ${(opts.idleTimeoutMs ?? 0) / 1000}s (reintenta o cambia de modelo con --model).`);
-    throw e;
+    const err = timedOut ? new Error(`El modelo no respondió en ${(opts.idleTimeoutMs ?? 0) / 1000}s (reintenta o cambia de modelo con --model).`) : e;
+    throw done.length ? new PartialTurnError(err, done) : err;
   } finally {
     disarm();
     opts.abortSignal?.removeEventListener('abort', onUserAbort);
@@ -125,15 +137,20 @@ export function retryDelayMs(e: unknown, attempt: number): number {
 
 /**
  * Ejecuta un turno; ante errores temporales del proveedor lo repite esperando lo que indique el proveedor o 2s, 4s, 8s…
- * El turno se repite entero porque el historial de entrada no se modifica hasta que termina.
+ * Si el turno ya había completado pasos (herramientas ejecutadas), el reintento continúa desde ahí: no se repiten.
  */
 export async function runTurn(opts: TurnOptions & { retries?: number; sleep?: (ms: number) => Promise<void>; onRetry?: (n: number, e: unknown, waitMs: number) => void }): Promise<TurnResult> {
   const retries = opts.retries ?? 3;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  // Pasos ya completados en intentos fallidos: el reintento continúa desde ahí en vez de repetirlos.
+  const carried: ModelMessage[] = [];
   for (let attempt = 0; ; attempt++) {
     try {
-      return await runTurnOnce(opts);
-    } catch (e) {
+      const r = await runTurnOnce({ ...opts, messages: [...opts.messages, ...carried] });
+      return { ...r, newMessages: [...carried, ...r.newMessages] };
+    } catch (thrown) {
+      const e = thrown instanceof PartialTurnError ? thrown.original : thrown;
+      if (thrown instanceof PartialTurnError) carried.push(...thrown.partial);
       if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) throw e;
       const hint = suggestedWaitMs(e);
       if (hint !== undefined && hint > MAX_WAIT_MS) {

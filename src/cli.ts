@@ -33,7 +33,7 @@ Uso:
   agente init                    Crea agente.config.json y .agente/prompts/ para personalizar
 
 Opciones:
-  -m, --model <prov/modelo>   Usa este modelo en todas las etapas (ej. google/gemini-3.5-flash)
+  -m, --model <prov/modelo>   Usa este modelo en todas las etapas (ej. google/gemini-3.5-flash-lite)
   -r, --role <rol>            (chat) modelo del rol: ${ROLES.join(' | ')}
   -p, --prompt <texto>        (chat) un solo turno y salir
       --base <rama>           (work) rama base; por defecto la actual
@@ -373,8 +373,8 @@ async function init(cwd: string) {
     join(cwd, 'agente.config.json'),
     JSON.stringify(
       {
-        model: 'google/gemini-3.5-flash',
-        roles: { plan: 'google/gemini-3.5-flash', implement: 'google/gemini-3.5-flash' },
+        model: 'google/gemini-3.5-flash-lite',
+        roles: { plan: 'google/gemini-3.5-flash-lite', implement: 'google/gemini-3.5-flash-lite' },
         workflow: { branchPrefix: 'feat/', isolation: 'branch', maxFixAttempts: 3 },
         mcpServers: {},
       },

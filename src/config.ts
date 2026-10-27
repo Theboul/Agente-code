@@ -67,7 +67,7 @@ export type WorkflowConfig = z.infer<typeof WorkflowConfig>;
 
 const ConfigSchema = z.object({
   /** Modelo por defecto, formato "proveedor/modelo". */
-  model: z.string().default('google/gemini-3.5-flash'),
+  model: z.string().default('google/gemini-3.5-flash-lite'),
   /** Sobrescribe el modelo para un rol concreto. */
   roles: z.partialRecord(z.enum(ROLES), z.string()).default({}),
   /** Proveedores personalizados o con URL propia (p. ej. ollama, openai-compatible). */

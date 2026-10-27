@@ -90,3 +90,49 @@ describe('reintentos ante errores temporales', () => {
     await expect(runTurn({ ...base, model: make(bad, 5) })).rejects.toThrow(/clave inválida/);
   });
 });
+
+describe('reintento con progreso', () => {
+  it('tras un fallo temporal a mitad de turno continúa desde los pasos ya hechos, sin repetir herramientas', async () => {
+    let calls = 0;
+    let executed = 0;
+    const prompts: string[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async ({ prompt }) => {
+        calls++;
+        prompts.push(JSON.stringify(prompt));
+        if (calls === 1) {
+          return {
+            stream: convertArrayToReadableStream([
+              { type: 'stream-start', warnings: [] },
+              { type: 'tool-call', toolCallId: 'c1', toolName: 'eco', input: JSON.stringify({ x: 'hola' }) },
+              { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool' }, usage },
+            ] as never),
+          };
+        }
+        if (calls === 2) throw Object.assign(new Error('límite por minuto'), { statusCode: 429, isRetryable: true });
+        return {
+          stream: convertArrayToReadableStream([
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't' },
+            { type: 'text-delta', id: 't', delta: 'terminado' },
+            { type: 'text-end', id: 't' },
+            { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage },
+          ] as never),
+        };
+      },
+    });
+    const r = await runTurn({
+      model,
+      system: 's',
+      messages: [{ role: 'user', content: 'x' }],
+      maxSteps: 5,
+      sleep: async () => {},
+      tools: { eco: tool({ description: 'eco', inputSchema: z.object({ x: z.string() }), execute: async ({ x }) => (executed++, `eco:${x}`) }) },
+    });
+    expect(executed).toBe(1);
+    expect(calls).toBe(3);
+    expect(prompts[2]).toContain('eco:hola'); // el reintento ya ve el resultado de la herramienta
+    expect(r.text).toBe('terminado');
+    expect(r.newMessages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
+  });
+});

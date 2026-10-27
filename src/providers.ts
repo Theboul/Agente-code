@@ -7,7 +7,7 @@ import type { Config } from './config.js';
 export function parseModelId(id: string): { provider: string; model: string } {
   const i = id.indexOf('/');
   if (i <= 0 || i === id.length - 1) {
-    throw new Error(`Modelo inválido "${id}". Usa el formato "proveedor/modelo" (p. ej. google/gemini-3.5-flash).`);
+    throw new Error(`Modelo inválido "${id}". Usa el formato "proveedor/modelo" (p. ej. google/gemini-3.5-flash-lite).`);
   }
   return { provider: id.slice(0, i), model: id.slice(i + 1) };
 }
