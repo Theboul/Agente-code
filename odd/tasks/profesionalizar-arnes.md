@@ -17,4 +17,4 @@
 `npm run lint` · `npm run typecheck` · `npm test`
 
 ## Progreso
-T1-T4 completas. T5 (endurecer classifyCommand) hecha: 72 tests adversariales, 122 en total. Pendiente: avisos de la revisión (permissions en ci.yml, tests del timeout y de rel()), dividir cli.ts, prueba de punta a punta.
+T1-T6 completas (127 tests, lint y typecheck verificados; tres revisiones aprobadas). Pendiente: cerrar el bypass de comillas y globs en la guía de lectura, reforzar el test del cierre tardío, dividir cli.ts y la prueba de punta a punta.
