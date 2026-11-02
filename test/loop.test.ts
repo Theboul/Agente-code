@@ -1,5 +1,5 @@
-import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test';
 import { tool } from 'ai';
+import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { retryDelayMs, runTurn, suggestedWaitMs } from '../src/agent/loop.js';
@@ -67,7 +67,13 @@ describe('reintentos ante errores temporales', () => {
       });
     };
     const sleeps: number[] = [];
-    const base = { system: 's', messages: [{ role: 'user' as const, content: 'x' }], tools: {}, maxSteps: 3, sleep: async (ms: number) => void sleeps.push(ms) };
+    const base = {
+      system: 's',
+      messages: [{ role: 'user' as const, content: 'x' }],
+      tools: {},
+      maxSteps: 3,
+      sleep: async (ms: number) => void sleeps.push(ms),
+    };
 
     const busy = Object.assign(new Error('alta demanda'), { statusCode: 503, isRetryable: true });
     const r = await runTurn({ ...base, model: make(busy, 2) });

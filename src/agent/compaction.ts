@@ -9,7 +9,10 @@ const SUMMARY_PROMPT = `Resume esta conversación entre un usuario y un agente d
 function pruneToolResults(messages: ModelMessage[], boundary: number): ModelMessage[] {
   return messages.map((m, i) => {
     if (i >= boundary || m.role !== 'tool' || !Array.isArray(m.content)) return m;
-    return { ...m, content: m.content.map((part) => (part.type === 'tool-result' ? { ...part, output: { type: 'text', value: '[resultado podado]' } } : part)) } as ModelMessage;
+    return {
+      ...m,
+      content: m.content.map((part) => (part.type === 'tool-result' ? { ...part, output: { type: 'text', value: '[resultado podado]' } } : part)),
+    } as ModelMessage;
   });
 }
 
@@ -51,7 +54,15 @@ export async function compactIfNeeded(
   const { text } = await generateText({
     model: o.model,
     system: SUMMARY_PROMPT,
-    messages: [{ role: 'user', content: head.map((m) => `${m.role}: ${JSON.stringify(m.content)}`).join('\n').slice(-400_000) }],
+    messages: [
+      {
+        role: 'user',
+        content: head
+          .map((m) => `${m.role}: ${JSON.stringify(m.content)}`)
+          .join('\n')
+          .slice(-400_000),
+      },
+    ],
     abortSignal: o.signal,
   });
   const summary: ModelMessage = { role: 'user', content: `[Resumen de la conversación anterior]\n\n${text}\n\n[La conversación continúa desde aquí]` };

@@ -2,3 +2,6 @@ node_modules
 dist
 .agente/sessions/
 .env
+.codegraph/
+.atl/
+agente.config.json

@@ -34,7 +34,10 @@ export async function findRun(root: string, branch: string): Promise<{ file: str
   const dir = await runsDir(root);
   let names: string[];
   try {
-    names = (await readdir(dir)).filter((n) => n.endsWith('.json')).sort().reverse();
+    names = (await readdir(dir))
+      .filter((n) => n.endsWith('.json'))
+      .sort()
+      .reverse();
   } catch {
     return undefined;
   }

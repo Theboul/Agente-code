@@ -8,15 +8,15 @@ import type { ModelMessage } from 'ai';
 import { compactIfNeeded } from './agent/compaction.js';
 import { runTurn } from './agent/loop.js';
 import { buildSystemPrompt } from './agent/system.js';
-import { loadConfig, modelFor, ROLES, type Config, type Role } from './config.js';
+import { type Config, loadConfig, modelFor, ROLES, type Role } from './config.js';
 import { currentBranch, repoRoot } from './git.js';
 import { connectMcpServers, type McpConnections } from './mcp/client.js';
 import type { Permissions } from './permissions.js';
 import { missingKeyHint, resolveModel } from './providers.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
-import { classifyRef, extractJson, IssueListSchema, IssueSchema, issueFromFile, issueFromText, type Issue } from './workflow/issue.js';
-import { DEFAULT_PROMPTS, loadPrompt } from './workflow/prompts.js';
+import { classifyRef, extractJson, type Issue, IssueListSchema, IssueSchema, issueFromFile, issueFromText } from './workflow/issue.js';
 import { makePrCreator } from './workflow/pr.js';
+import { DEFAULT_PROMPTS, loadPrompt } from './workflow/prompts.js';
 import { runWorkflow, type StageRunner } from './workflow/run.js';
 import { findRun } from './workflow/runs.js';
 import { ship } from './workflow/ship.js';
@@ -136,7 +136,13 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
     // Sin herramientas = redacción de commit/PR: se muestra ya sanitizado por el flujo, no el texto crudo.
     const stream = tools !== 'none';
     const toolset =
-      tools === 'none' ? {} : tools === 'readonly' ? readOnlyTools(workdir, perms) : tools === 'mcp' ? mcp.tools : { ...mcp.tools, ...nativeTools(workdir, perms, { onTodos: showTodos }) };
+      tools === 'none'
+        ? {}
+        : tools === 'readonly'
+          ? readOnlyTools(workdir, perms)
+          : tools === 'mcp'
+            ? mcp.tools
+            : { ...mcp.tools, ...nativeTools(workdir, perms, { onTodos: showTodos }) };
     const ac = new AbortController();
     const onSigint = () => ac.abort();
     process.once('SIGINT', onSigint);
@@ -151,7 +157,12 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
         messages,
         maxSteps: config.maxSteps,
         idleTimeoutMs: config.requestTimeoutSeconds * 1000,
-        onRetry: (n, e, ms) => console.log(dim(`\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`)),
+        onRetry: (n, e, ms) =>
+          console.log(
+            dim(
+              `\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`,
+            ),
+          ),
         abortSignal: ac.signal,
         onText: (d) => stream && process.stdout.write(d),
         onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
@@ -225,10 +236,7 @@ async function startWork(ctx: Ctx, issue: Issue) {
   else console.log(`Cuando quieras entregarlo: agente ship ${result.branch}`);
 }
 
-async function deliver(
-  ctx: Ctx,
-  r: { branch: string; workdir: string; base: string; issue: Issue; plan: string; verified?: boolean; runFile?: string },
-) {
+async function deliver(ctx: Ctx, r: { branch: string; workdir: string; base: string; issue: Issue; plan: string; verified?: boolean; runFile?: string }) {
   const runStage = makeStageRunner(ctx);
   const res = await ship({
     root: ctx.root ?? ctx.cwd,
@@ -272,7 +280,7 @@ async function issues(ctx: Ctx) {
   const json = await askTracker(ctx, await loadPrompt(root, 'issue-list', { query: ctx.config.workflow.issueQuery }));
   const list = IssueListSchema.parse(json);
   if (!list.length) return console.log('No hay issues que coincidan.');
-  list.forEach((i, n) => console.log(`${String(n + 1).padStart(2)}. ${i.key ?? '-'}  ${i.title}`));
+  for (const [n, i] of list.entries()) console.log(`${String(n + 1).padStart(2)}. ${i.key ?? '-'}  ${i.title}`);
   const pick = Number((await ctx.rl.question('\nNúmero de la issue (Enter para salir): ')).trim());
   const chosen = list[pick - 1];
   if (!chosen) return;
@@ -304,7 +312,12 @@ async function chat(ctx: Ctx) {
         messages: history,
         maxSteps: config.maxSteps,
         idleTimeoutMs: config.requestTimeoutSeconds * 1000,
-        onRetry: (n, e, ms) => console.log(dim(`\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`)),
+        onRetry: (n, e, ms) =>
+          console.log(
+            dim(
+              `\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`,
+            ),
+          ),
         abortSignal: ac.signal,
         onText: (d) => process.stdout.write(d),
         onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),

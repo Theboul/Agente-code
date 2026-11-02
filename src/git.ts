@@ -1,5 +1,7 @@
-import { spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { basename, dirname, join, resolve } from 'node:path';
+import { setTimeout as sleepMs } from 'node:timers/promises';
+import { promisify } from 'node:util';
 
 export interface GitResult {
   code: number;
@@ -7,17 +9,22 @@ export interface GitResult {
   stderr: string;
 }
 
+const execFileAsync = promisify(execFile);
+/** Tope de salida por programa; si se supera, el proceso se corta y exec devuelve código 1 con la salida recibida hasta ese punto. */
+const MAX_BUFFER = 64 * 1024 * 1024;
+
 /** Ejecuta un programa SIN shell (los argumentos nunca se interpretan). */
-export function exec(cmd: string, args: string[], cwd: string): Promise<GitResult> {
-  return new Promise((res) => {
-    const child = spawn(cmd, args, { cwd });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d: Buffer) => (stdout += d));
-    child.stderr.on('data', (d: Buffer) => (stderr += d));
-    child.on('error', (e) => res({ code: 127, stdout, stderr: e.message }));
-    child.on('close', (code) => res({ code: code ?? 1, stdout, stderr }));
-  });
+export async function exec(cmd: string, args: string[], cwd: string): Promise<GitResult> {
+  try {
+    const { stdout, stderr } = await execFileAsync(cmd, args, { cwd, maxBuffer: MAX_BUFFER, windowsHide: true });
+    return { code: 0, stdout, stderr };
+  } catch (e) {
+    const err = e as { code?: number | string | null; signal?: string | null; stdout?: string; stderr?: string; message: string };
+    const stdout = err.stdout ?? '';
+    if (typeof err.code === 'number') return { code: err.code, stdout, stderr: err.stderr ?? '' };
+    // Terminado por señal: código 1; programa inexistente o no ejecutable (ENOENT…): 127.
+    return err.signal ? { code: 1, stdout, stderr: err.stderr ?? '' } : { code: 127, stdout, stderr: err.message };
+  }
 }
 
 export const git = (cwd: string, args: string[]): Promise<GitResult> => exec('git', args, cwd);
@@ -108,13 +115,7 @@ export function compareUrl(remote: string, base: string, branch: string): string
 const TRANSIENT = /could not resolve|timed out|connection (reset|refused|closed)|unable to access|rpc failed|early eof|the remote end hung up|\b50[234]\b/i;
 
 /** Push normal (nunca --force). Reintenta solo ante fallos de red, con espera exponencial. */
-export async function pushBranch(
-  cwd: string,
-  remote: string,
-  branch: string,
-  retries = 4,
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
-): Promise<void> {
+export async function pushBranch(cwd: string, remote: string, branch: string, retries = 4, sleep: (ms: number) => Promise<unknown> = sleepMs): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     const r = await git(cwd, ['push', '-u', remote, branch]);
     if (r.code === 0) return;

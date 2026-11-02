@@ -1,11 +1,19 @@
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { McpServerConfig } from '../src/config.js';
-import { connectMcpServers, expandEnv, needsApproval, toolName, type McpConnections } from '../src/mcp/client.js';
+import { connectMcpServers, expandEnv, type McpConnections, needsApproval, toolName } from '../src/mcp/client.js';
 import type { Permissions } from '../src/permissions.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-mcp.mjs', import.meta.url));
-const base: McpServerConfig = { command: process.execPath, args: [fixture], env: {}, transport: 'http', headers: {}, autoApprove: ['list_issues'], enabled: true };
+const base: McpServerConfig = {
+  command: process.execPath,
+  args: [fixture],
+  env: {},
+  transport: 'http',
+  headers: {},
+  autoApprove: ['list_issues'],
+  enabled: true,
+};
 
 const asked: string[] = [];
 const perms = (answer: boolean): Permissions => ({
