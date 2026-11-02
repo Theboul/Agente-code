@@ -1,3 +1,4 @@
+import { setTimeout as sleepMs } from 'node:timers/promises';
 import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
 
 export interface TurnOptions {
@@ -143,7 +144,7 @@ export async function runTurn(
   opts: TurnOptions & { retries?: number; sleep?: (ms: number) => Promise<void>; onRetry?: (n: number, e: unknown, waitMs: number) => void },
 ): Promise<TurnResult> {
   const retries = opts.retries ?? 3;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sleep = opts.sleep ?? sleepMs;
   // Pasos ya completados en intentos fallidos: el reintento continúa desde ahí en vez de repetirlos.
   const carried: ModelMessage[] = [];
   for (let attempt = 0; ; attempt++) {
