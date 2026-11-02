@@ -14,3 +14,10 @@
 
 ## Progreso
 T1 y T2 completas: 176 tests, lint y typecheck verificados. 5 tests de falsos positivos fallaban antes del cambio.
+
+## Prueba de punta a punta (2026-11-02)
+Repositorio de juguete en el directorio temporal, modelo real `google/gemini-3.5-flash-lite`:
+- `agente work ... --yes`: plan, rama, implementación (`multiply` + test), verificación 2/2 y revisión OK. Verificado aparte: `npm test` 2 pasan, 0 fallan.
+- `agente ship`: commit en Conventional Commits en español, sin coautor, autor correcto; push a un remoto local OK.
+- Hallazgo: con `gh` autenticado pero un remoto que no es de GitHub, `gh pr create` fallaba y abortaba `ship` (exit 1) sin ofrecer el enlace manual. Corregido: en modo `auto` cae a MCP y luego a enlace manual, con el motivo (`PrOutcome.note`). Un método explícito sigue propagando el fallo.
+- Pendiente: probar `ship` contra GitHub real y con un MCP de PR; con un remoto no GitHub el enlace manual dice "no se reconoce el remoto".
