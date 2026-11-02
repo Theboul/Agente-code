@@ -62,6 +62,13 @@ describe('classifyCommand: apagado del sistema solo en posición de comando', ()
     '$(reboot)',
     'systemctl poweroff',
     'systemctl reboot',
+    'nohup reboot',
+    'time shutdown -h now',
+    'env FOO=1 reboot',
+    'xargs reboot',
+    'sh -c reboot',
+    "sh -c 'reboot'",
+    'bash -c "echo ok; poweroff"',
   ];
   it.each(denied)('bloquea %s', (cmd) => {
     expect(decisionOf(cmd)).toBe('deny');
