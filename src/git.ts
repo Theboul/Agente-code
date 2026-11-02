@@ -9,10 +9,11 @@ export interface GitResult {
   stderr: string;
 }
 
-/** Ejecuta un programa SIN shell (los argumentos nunca se interpretan). */
 const execFileAsync = promisify(execFile);
+/** Tope de salida por programa; si se supera, el proceso se corta y exec devuelve código 1 con la salida recibida hasta ese punto. */
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+/** Ejecuta un programa SIN shell (los argumentos nunca se interpretan). */
 export async function exec(cmd: string, args: string[], cwd: string): Promise<GitResult> {
   try {
     const { stdout, stderr } = await execFileAsync(cmd, args, { cwd, maxBuffer: MAX_BUFFER, windowsHide: true });
