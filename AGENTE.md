@@ -1,6 +1,6 @@
 # Instrucciones del proyecto
 
-Arnés de código en consola (TypeScript, Node >= 20, ESM). Se usa a sí mismo como instrucciones cuando se ejecuta sobre este repositorio.
+Arnés de código en consola (TypeScript, Node >= 22.9, ESM). Se usa a sí mismo como instrucciones cuando se ejecuta sobre este repositorio.
 
 ## Comandos
 
