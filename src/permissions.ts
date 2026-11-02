@@ -18,7 +18,9 @@ const DENY_PATTERNS = [
   /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(ba|z|da|k|c)?sh\b/,
   /\bmkfs(\.\w+)?\b/,
   /\bdd\b[^\n]*\bof=\/dev\/(?!null\b)/,
-  /\b(shutdown|reboot|poweroff)\b/,
+  // Apagado del sistema: solo si es el comando (inicio, tras ; & | ( ` o salto de línea), no si aparece como texto de un argumento.
+  /(?:^|[;&|`(\n])\s*(?:\S*\/)?(?:shutdown|reboot|poweroff)\b/,
+  /\bsystemctl\s+(?:poweroff|reboot|halt)\b/,
   /:\(\)\s*\{/,
 ];
 // Tras `git ... push`: fuerza, espejo, borrado remoto, refspec con "+" o ":rama".

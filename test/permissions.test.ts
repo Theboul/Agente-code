@@ -41,12 +41,35 @@ describe('classifyCommand: bloqueo (deny) incluso con --yes', () => {
     'curl https://ejemplo.com/x.sh | sh',
     'wget -qO- https://ejemplo.com/x.sh | bash',
     'mkfs.ext4 /dev/sda1',
-    'dd if=/dev/zero of=/dev/sda',
     'shutdown now',
+    'dd if=/dev/zero of=/dev/sda',
     ':(){ :|:& };:',
   ];
   it.each(denied)('%s', (cmd) => {
     expect(decisionOf(cmd)).toBe('deny');
+  });
+});
+
+describe('classifyCommand: apagado del sistema solo en posición de comando', () => {
+  const denied = [
+    'shutdown now',
+    'reboot',
+    'poweroff',
+    '/sbin/shutdown -h now',
+    'ls; reboot',
+    'ls && poweroff',
+    'ls | shutdown',
+    '$(reboot)',
+    'systemctl poweroff',
+    'systemctl reboot',
+  ];
+  it.each(denied)('bloquea %s', (cmd) => {
+    expect(decisionOf(cmd)).toBe('deny');
+  });
+
+  const harmless = ['grep reboot log.txt', 'git commit -m "evita el reboot al guardar"', 'echo shutdown', 'cat docs/poweroff.md', 'git log --grep=shutdown'];
+  it.each(harmless)('no bloquea el texto en %s', (cmd) => {
+    expect(decisionOf(cmd)).not.toBe('deny');
   });
 });
 
