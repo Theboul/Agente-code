@@ -6,10 +6,14 @@ import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { runChat } from './chat.js';
 import { type Config, loadConfig, modelFor, ROLES, type Role } from './config.js';
+import { type ConnectDeps, connectTracker, keyInstructions, loginProvider } from './connect/connect.js';
+import { PRESETS } from './connect/presets.js';
+import { applyCredentials } from './credentials.js';
 import { currentBranch, git, repoRoot } from './git.js';
 import { parseInvocation } from './invocation.js';
 import { connectMcpServers, type McpConnections } from './mcp/client.js';
 import { MODES, type Permissions } from './permissions.js';
+import { missingKeyHint, PROVIDER_HELP } from './providers.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c, termWidth } from './ui/ansi.js';
@@ -38,6 +42,8 @@ Uso:
                                  <issue> = PROJ-123 | #45 | URL (vía MCP), archivo .md/.txt, o texto libre
   agente ship [rama]             Commit → push → PR → sincroniza el tracker (tras "work")
   agente issues                  Lista issues del tracker (MCP), eliges una y sigue el flujo
+  agente connect [jira|trello|github]   Conecta tu tracker paso a paso
+  agente login                   Pega la clave de tu proveedor de modelos
   agente init                    Crea agente.config.json y .agente/prompts/ para personalizar
 
 Opciones:
@@ -52,7 +58,7 @@ Opciones:
   -y, --yes                   Aprobar planes, ediciones y comandos sin preguntar
   -h, --help
 
-Dentro de la sesión: /work, /issues, /ship, /mode, /model, /role, /mcp, /status, /clear, /help, /exit
+Dentro de la sesión: /work, /issues, /ship, /connect, /login, /mode, /model, /role, /mcp, /status, /clear, /help, /exit
   Tab completa comandos, issues y ramas · Shift+Tab cambia el modo de permisos · ↑ recupera lo escrito
 Configuración: agente.config.json (ver README).`;
 
@@ -84,6 +90,7 @@ async function localBranches(root: string, prefix: string): Promise<string[]> {
 
 async function main() {
   if (values.help) return console.log(HELP);
+  await applyCredentials();
   const cwd = process.cwd();
   const inv = parseInvocation(positionals, cwd);
   if (inv.suggest) {
@@ -106,6 +113,7 @@ async function main() {
     models: [...new Set([config.model, ...Object.values(config.roles), 'anthropic/claude-sonnet-5-5', 'anthropic/claude-haiku-5-5'])],
     roles: [...ROLES],
     modes: [...MODES],
+    trackers: PRESETS.map((p) => p.id),
     suppress: false,
   };
   const historyFile = process.stdin.isTTY && cmd === 'chat' ? defaultHistoryFile() : undefined;
@@ -152,6 +160,7 @@ async function main() {
 
   const ctx: Ctx = { cwd, root, config, perms, mcp, rl, ui, interrupt, completion };
   try {
+    if (['chat', 'work', 'issues', 'ship'].includes(cmd) && values.prompt === undefined) await ensureKeys(ctx);
     if (cmd === 'chat') {
       await runChat({
         cwd,
@@ -171,14 +180,55 @@ async function main() {
           work: async (ref) => startWork(ctx, await resolveIssue(ctx, ref)),
           issues: () => issues(ctx),
           ship: (branch) => shipBranch(ctx, branch),
+          connect: async (which) => void (await connectTracker(connectDeps(ctx), which)),
+          login: async (modelId) => void (await loginProvider(connectDeps(ctx), modelId)),
         },
       });
+    } else if (cmd === 'connect') {
+      if (!process.stdin.isTTY) throw new Error('`agente connect` es interactivo: ejecútalo en una terminal.');
+      await connectTracker(connectDeps(ctx), inv.args[0]);
+    } else if (cmd === 'login') {
+      if (!process.stdin.isTTY) throw new Error('`agente login` es interactivo: ejecútalo en una terminal o exporta la variable de la clave.');
+      await loginProvider(connectDeps(ctx), values.model ?? modelFor(config, values.role ? (values.role as Role) : 'implement'));
     } else if (cmd === 'work') await work(ctx, inv.args);
     else if (cmd === 'ship') await shipBranch(ctx, inv.args[0]);
     else await issues(ctx);
   } finally {
     rl.close();
     await mcp.close();
+  }
+}
+
+/** Pone a disposición de /connect y /login todo lo que necesitan de la sesión. */
+function connectDeps(ctx: Ctx): ConnectDeps {
+  return {
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+    rl: ctx.rl,
+    keys: stdinKeys(),
+    out: process.stdout,
+    choose: workflowIO(ctx).choose,
+    mcp: ctx.mcp,
+    config: ctx.config,
+  };
+}
+
+/** Primera ejecución: si a los modelos que se van a usar les falta la clave, ofrece pegarla ahora en lugar de fallar más tarde. */
+async function ensureKeys(ctx: Ctx): Promise<void> {
+  if (!process.stdin.isTTY) return;
+  const ids = values.model ? [values.model] : [...new Set((['plan', 'implement', 'light'] as const).map((r) => modelFor(ctx.config, r)))];
+  const asked = new Set<string>();
+  for (const id of ids) {
+    const hint = missingKeyHint(id, ctx.config);
+    if (!hint || asked.has(hint)) continue;
+    asked.add(hint);
+    ctx.ui.warn(keyInstructions(id, ctx.config));
+    const reply = await workflowIO(ctx).choose({
+      title: `Falta la clave de ${PROVIDER_HELP[id.split('/')[0] ?? '']?.label ?? id.split('/')[0]}`,
+      approve: 'Pegar la clave ahora',
+      cancel: 'Más tarde (/login)',
+    });
+    if (reply.kind === 'approve') await loginProvider(connectDeps(ctx), id);
   }
 }
 
@@ -216,7 +266,7 @@ function makeStageRunner(ctx: Ctx): StageRunner {
 /** Pide al modelo (con las herramientas MCP) un JSON; sin MCP configurado no hay tracker que consultar. */
 async function askTracker(ctx: Ctx, prompt: string): Promise<unknown> {
   if (!Object.keys(ctx.mcp.tools).length) {
-    throw new Error('No hay herramientas MCP conectadas. Configura "mcpServers" en agente.config.json, o pasa un archivo .md / texto libre.');
+    throw new Error('No hay un tracker conectado. Conéctalo con /connect jira|trello|github (o `agente connect jira`), o pasa un archivo .md / texto libre.');
   }
   const run = makeStageRunner(ctx);
   const r = await run({

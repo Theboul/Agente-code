@@ -6,6 +6,7 @@ import { type Config, modelFor, ROLES, type Role } from './config.js';
 import { currentBranch } from './git.js';
 import type { McpConnections } from './mcp/client.js';
 import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type PermissionMode, type Permissions } from './permissions.js';
+import { missingKeyHint } from './providers.js';
 import { nativeTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c } from './ui/ansi.js';
@@ -19,6 +20,10 @@ export interface ChatHandlers {
   work(ref: string): Promise<void>;
   issues(): Promise<void>;
   ship(branch?: string): Promise<void>;
+  /** Conexión guiada a Jira, Trello o GitHub. */
+  connect(which?: string): Promise<void>;
+  /** Pide y guarda la clave del proveedor del modelo indicado. */
+  login(modelId: string): Promise<void>;
 }
 
 export interface ChatDeps {
@@ -46,6 +51,8 @@ const COMMANDS: [string, string][] = [
   ['/work [issue]', 'Flujo completo: plan → rama → código → verificación → revisión. Sin argumento abre /issues'],
   ['/issues', 'Lista las issues del tracker (MCP) y te deja elegir una'],
   ['/ship [rama]', 'Commit → push → PR → actualiza el tracker'],
+  ['/connect [jira|trello|github]', 'Conecta tu tracker paso a paso (guarda el token fuera del repo)'],
+  ['/login', 'Pega la clave del proveedor del modelo actual (Gemini, Claude, OpenAI)'],
   ['/mode [ask|edits|plan]', 'Modo de permisos (Shift+Tab lo cambia): preguntar, aceptar ediciones solas, solo plan'],
   ['/model <prov/modelo>', 'Cambia de modelo'],
   ['/role <plan|implement|light>', 'Usa el modelo configurado para un rol'],
@@ -91,17 +98,18 @@ export async function runChat(d: ChatDeps): Promise<void> {
   const { cwd, config, perms, mcp, rl, ui, interrupt, handlers } = d;
   let modelId = d.model ?? modelFor(config, d.role ?? 'implement');
   const system = `${await buildSystemPrompt(cwd)}${CHAT_RULES}`;
-  const tools: ToolSet = {
-    ...mcp.tools,
+  const local: ToolSet = {
     ...nativeTools(cwd, perms, { onTodos: (t) => ui.todos(t) }),
     ...(d.prompt === undefined ? { start_workflow: workflowTool(perms, handlers) } : {}),
   };
+  // Se arma en cada turno: así las herramientas de un tracker recién conectado (/connect) están disponibles al instante.
+  const currentTools = (): ToolSet => ({ ...mcp.tools, ...local });
   let history: ModelMessage[] = [];
 
   const turn = async (input: string) => {
     history.push({ role: 'user', content: input });
     try {
-      const { newMessages } = await modelTurn({ config, ui, interrupt }, { modelId, system, tools, messages: history });
+      const { newMessages } = await modelTurn({ config, ui, interrupt }, { modelId, system, tools: currentTools(), messages: history });
       history.push(...newMessages);
     } catch (e) {
       history.pop();
@@ -116,6 +124,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
 
   const branch = await currentBranch(cwd).catch(() => undefined);
   ui.banner({ model: modelId, cwd, branch, mcp: Object.keys(mcp.tools).length || undefined });
+  if (!mcp.status.some((x) => x.ok)) ui.notice('Sin tracker conectado: /connect jira|trello|github');
   const modeLabel = () => `modo: ${MODE_LABEL[perms.mode ?? 'ask']} · Shift+Tab cambia`;
   d.completion.suppress = false;
 
@@ -136,6 +145,11 @@ export async function runChat(d: ChatDeps): Promise<void> {
       ui.notice(s.ok ? `✓ ${s.name}: ${s.tools.length} herramientas` : `✗ ${s.name}: ${s.error}`);
       if (s.ok) for (const t of s.tools) ui.notice(`    ${t}`);
     }
+  };
+
+  const warnMissingKey = () => {
+    const hint = missingKeyHint(modelId, config);
+    if (hint) ui.warn(`Falta ${hint} para ${modelId}. Pégala con /login.`);
   };
 
   const command = async (line: string): Promise<boolean> => {
@@ -176,6 +190,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
         else {
           modelId = arg;
           ui.notice(`Modelo: ${modelId}`);
+          warnMissingKey();
         }
         break;
       case '/role':
@@ -183,7 +198,14 @@ export async function runChat(d: ChatDeps): Promise<void> {
         else {
           modelId = modelFor(config, arg as Role);
           ui.notice(`Modelo (${arg}): ${modelId}`);
+          warnMissingKey();
         }
+        break;
+      case '/connect':
+        await guarded(() => handlers.connect(arg || undefined));
+        break;
+      case '/login':
+        await guarded(() => handlers.login(modelId));
         break;
       case '/work':
         if (!arg) await guarded(() => handlers.issues());

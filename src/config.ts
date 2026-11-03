@@ -11,7 +11,7 @@ const ProviderConfig = z.object({
   apiKeyEnv: z.string().optional(),
 });
 
-const McpServerConfig = z
+export const McpServerSchema = z
   .object({
     /** Servidor local (stdio). */
     command: z.string().optional(),
@@ -27,7 +27,7 @@ const McpServerConfig = z
   })
   .refine((s) => Boolean(s.command) !== Boolean(s.url), { message: 'Define "command" (stdio) o "url" (remoto), no ambos.' });
 
-export type McpServerConfig = z.infer<typeof McpServerConfig>;
+export type McpServerConfig = z.infer<typeof McpServerSchema>;
 
 const WorkflowConfig = z.object({
   /** Prefijo de las ramas creadas, p. ej. "feat/" → feat/proj-123-arreglar-login. */
@@ -73,7 +73,7 @@ const ConfigSchema = z.object({
   /** Proveedores personalizados o con URL propia (p. ej. ollama, openai-compatible). */
   providers: z.record(z.string(), ProviderConfig).default({}),
   /** Servidores MCP (Jira, Trello, GitHub…). Los valores admiten ${VARIABLE} del entorno. */
-  mcpServers: z.record(z.string(), McpServerConfig).default({}),
+  mcpServers: z.record(z.string(), McpServerSchema).default({}),
   workflow: WorkflowConfig.prefault({}),
   /** Ventana de contexto del modelo en tokens; al pasar de `compactAt` el historial se resume. */
   contextWindow: z.number().int().positive().default(128_000),

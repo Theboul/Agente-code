@@ -94,6 +94,13 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 - **Teclas:** `Esc` o `Ctrl+C` interrumpen al modelo; `Ctrl+C` dos veces en reposo sale. Las decisiones del flujo (aprobar el plan, aceptar el diff, commit, push, PR) usan el mismo selector.
 - Sin terminal interactiva (pipes, CI) los diálogos rechazan por seguridad; usa `--yes` o `--ship`. Los colores se desactivan con `NO_COLOR`.
 
+## Primera vez: clave y tracker sin editar JSON
+
+- **`agente` detecta si falta la clave** del modelo y te guía: dónde crearla (Gemini, Claude, OpenAI), te la pide **sin mostrarla** (solo `•`), la **comprueba contra el proveedor** y la guarda en `~/.agente/credentials` (permisos 600, fuera de cualquier repositorio; `AGENTE_HOME` cambia la carpeta). Lo exportado en tu entorno siempre manda. Más tarde: `/login`.
+- **`/connect jira|trello|github`** (o `agente connect jira`): te dice cómo conseguir el token, pide los datos, guarda el token igual que la clave, **prueba la conexión**, separa las herramientas de **lectura** de las de **escritura** (te propone que las de lectura no pregunten; las de escritura siguen preguntando) y escribe la sección `mcpServers` de `agente.config.json` con `${VARIABLE}`, nunca con el secreto. Las herramientas quedan disponibles al instante, sin reiniciar.
+- Servidores usados: Jira `@aashari/mcp-server-atlassian-jira` (token de API de Atlassian), Trello `@delorenj/mcp-server-trello` (API Key y token) y GitHub, el servidor MCP remoto oficial (token personal con permiso de Issues y Pull requests). Se descargan con `npx` la primera vez, que puede tardar.
+- **No soportado:** OAuth con navegador (p. ej. el servidor remoto oficial de Atlassian); por eso Jira se conecta con un servidor local y token de API.
+
 ## Menos teclas
 
 - **Atajos:** `agente PROJ-123` (también `#45`, una URL o un `.md`) arranca el flujo directo, sin escribir `work`. `agente "explica el módulo de pagos"` abre la sesión con esa pregunta. Si te equivocas en un comando (`agente isues`) te sugiere el correcto.

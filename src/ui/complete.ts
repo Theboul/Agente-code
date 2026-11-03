@@ -6,6 +6,7 @@ export interface CompletionState {
   models: string[];
   roles: string[];
   modes: string[];
+  trackers: string[];
   /** Lo activa Shift+Tab para que readline no lo trate como un Tab de completado. */
   suppress: boolean;
 }
@@ -34,6 +35,7 @@ export function createCompleter(state: () => CompletionState): Completer {
       '/model': s.models,
       '/role': s.roles,
       '/mode': s.modes,
+      '/connect': s.trackers,
     };
     const hits = (pool[cmd] ?? []).filter((c) => c.toLowerCase().startsWith(arg.toLowerCase()));
     return [hits, arg];

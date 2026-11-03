@@ -51,6 +51,7 @@ describe('autocompletado con Tab', () => {
     models: ['google/gemini-3.5-flash-lite', 'anthropic/claude-sonnet-5-5'],
     roles: ['plan', 'implement', 'light'],
     modes: [...MODES],
+    trackers: ['jira', 'trello', 'github'],
     suppress: false,
   };
   const complete = createCompleter(() => state);
@@ -68,6 +69,7 @@ describe('autocompletado con Tab', () => {
     expect(complete('/model anth')).toEqual([['anthropic/claude-sonnet-5-5'], 'anth']);
     expect(complete('/role pl')).toEqual([['plan'], 'pl']);
     expect(complete('/mode e')).toEqual([['edits'], 'e']);
+    expect(complete('/connect t')).toEqual([['trello'], 't']);
   });
 
   it('no completa texto normal ni comandos sin lista', () => {

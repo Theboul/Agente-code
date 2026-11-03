@@ -2,6 +2,7 @@ import type { ModelMessage, ToolSet } from 'ai';
 import { compactIfNeeded } from './agent/compaction.js';
 import { runTurn } from './agent/loop.js';
 import type { Config } from './config.js';
+import { keyInstructions } from './connect/connect.js';
 import { missingKeyHint, resolveModel } from './providers.js';
 import { truncate } from './ui/ansi.js';
 import type { Interrupt } from './ui/interrupt.js';
@@ -27,7 +28,7 @@ export interface ModelTurnOptions {
 export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<{ text: string; newMessages: ModelMessage[] }> {
   const { config, ui, interrupt } = ctx;
   const hint = missingKeyHint(o.modelId, config);
-  if (hint) throw new Error(`Falta la variable de entorno ${hint} para usar ${o.modelId}.`);
+  if (hint) throw new Error(keyInstructions(o.modelId, config));
   const stream = o.stream ?? true;
   const ac = new AbortController();
   const abort = () => ac.abort();
@@ -61,7 +62,12 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
     });
     return { text: r.text, newMessages: r.newMessages };
   } catch (e) {
-    throw ac.signal.aborted ? new Error('Interrumpido por el usuario.') : new Error(`Falló el modelo ${o.modelId}: ${e instanceof Error ? e.message : e}`);
+    if (ac.signal.aborted) throw new Error('Interrumpido por el usuario.');
+    const msg = e instanceof Error ? e.message : String(e);
+    const authHint = /api key|apikey|unauthori[sz]ed|\b40[13]\b|permission denied|invalid.*key/i.test(msg)
+      ? '\nSi la clave es incorrecta, cámbiala con /login.'
+      : '';
+    throw new Error(`Falló el modelo ${o.modelId}: ${msg}${authHint}`);
   } finally {
     ui.idle();
     ui.endText();

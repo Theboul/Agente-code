@@ -1,6 +1,6 @@
 import { classifyRef } from './workflow/issue.js';
 
-export const COMMANDS = ['chat', 'work', 'ship', 'issues', 'init'] as const;
+export const COMMANDS = ['chat', 'work', 'ship', 'issues', 'init', 'connect', 'login'] as const;
 export type Command = (typeof COMMANDS)[number];
 
 export interface Invocation {

@@ -14,6 +14,8 @@ export interface McpServerStatus {
 export interface McpConnections {
   tools: ToolSet;
   status: McpServerStatus[];
+  /** Conecta más servidores en caliente (p. ej. tras /connect). Devuelve el estado de cada uno. */
+  add(servers: Record<string, McpServerConfig>, timeoutMs?: number): Promise<McpServerStatus[]>;
   close(): Promise<void>;
 }
 
@@ -91,24 +93,35 @@ function cleanEnv(): Record<string, string> {
 
 /** Conecta todos los servidores en paralelo; un servidor caído no impide usar el resto. */
 export async function connectMcpServers(servers: Record<string, McpServerConfig>, perms: Permissions, timeoutMs = 20_000): Promise<McpConnections> {
-  const entries = Object.entries(servers).filter(([, c]) => c.enabled);
   const clients: MCPClient[] = [];
   const tools: ToolSet = {};
   const status: McpServerStatus[] = [];
 
-  await Promise.all(
-    entries.map(async ([name, cfg]) => {
-      try {
-        const r = await connectOne(name, cfg, perms, timeoutMs);
-        clients.push(r.client);
-        Object.assign(tools, r.tools);
-        status.push({ name, ok: true, tools: Object.keys(r.tools) });
-      } catch (e) {
-        status.push({ name, ok: false, tools: [], error: e instanceof Error ? e.message : String(e) });
-      }
-    }),
-  );
+  const add = async (more: Record<string, McpServerConfig>, addTimeoutMs = timeoutMs): Promise<McpServerStatus[]> => {
+    const added: McpServerStatus[] = [];
+    await Promise.all(
+      Object.entries(more)
+        .filter(([, c]) => c.enabled)
+        .map(async ([name, cfg]) => {
+          let st: McpServerStatus;
+          try {
+            const r = await connectOne(name, cfg, perms, addTimeoutMs);
+            clients.push(r.client);
+            Object.assign(tools, r.tools);
+            st = { name, ok: true, tools: Object.keys(r.tools) };
+          } catch (e) {
+            st = { name, ok: false, tools: [], error: e instanceof Error ? e.message : String(e) };
+          }
+          const old = status.findIndex((x) => x.name === name);
+          if (old >= 0) status.splice(old, 1);
+          status.push(st);
+          added.push(st);
+        }),
+    );
+    status.sort((a, b) => a.name.localeCompare(b.name));
+    return added;
+  };
 
-  status.sort((a, b) => a.name.localeCompare(b.name));
-  return { tools, status, close: async () => void (await Promise.allSettled(clients.map((c) => c.close()))) };
+  await add(servers);
+  return { tools, status, add, close: async () => void (await Promise.allSettled(clients.map((c) => c.close()))) };
 }

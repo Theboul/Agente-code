@@ -49,3 +49,44 @@ export function missingKeyHint(id: string, config: Config): string | undefined {
   const env = config.providers[provider]?.apiKeyEnv ?? DEFAULT_KEY_ENV[provider];
   return env && !process.env[env] ? env : undefined;
 }
+
+export interface ProviderHelp {
+  label: string;
+  /** Dónde se crea la clave. */
+  url?: string;
+  note: string;
+}
+
+export const PROVIDER_HELP: Record<string, ProviderHelp> = {
+  google: { label: 'Google Gemini', url: 'https://aistudio.google.com/apikey', note: 'Tiene nivel gratuito, con límites por minuto y por día.' },
+  anthropic: {
+    label: 'Anthropic (Claude)',
+    url: 'https://console.anthropic.com/settings/keys',
+    note: 'Necesita crédito cargado en Billing; una suscripción a Claude no incluye API.',
+  },
+  openai: { label: 'OpenAI', url: 'https://platform.openai.com/api-keys', note: 'Necesita crédito cargado en la cuenta.' },
+  ollama: { label: 'Ollama (local)', note: 'No usa clave: instala Ollama, ejecuta `ollama serve` y descarga un modelo con `ollama pull <modelo>`.' },
+};
+
+export type KeyCheck = 'valid' | 'invalid' | 'unknown';
+
+/**
+ * Comprueba una clave con una petición barata (listar modelos). "unknown" si no hay red o el proveedor no tiene
+ * una comprobación conocida: en ese caso no se bloquea nada.
+ */
+export async function checkApiKey(provider: string, key: string, fetchImpl: typeof fetch = fetch): Promise<KeyCheck> {
+  const requests: Record<string, { url: string; headers: Record<string, string> }> = {
+    google: { url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', headers: { 'x-goog-api-key': key } },
+    anthropic: { url: 'https://api.anthropic.com/v1/models?limit=1', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } },
+    openai: { url: 'https://api.openai.com/v1/models', headers: { authorization: `Bearer ${key}` } },
+  };
+  const req = requests[provider];
+  if (!req) return 'unknown';
+  try {
+    const res = await fetchImpl(req.url, { headers: req.headers, signal: AbortSignal.timeout(8000) });
+    if (res.ok) return 'valid';
+    return res.status === 400 || res.status === 401 || res.status === 403 ? 'invalid' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
