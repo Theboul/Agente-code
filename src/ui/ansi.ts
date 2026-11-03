@@ -42,3 +42,6 @@ export const eraseUp = (lines: number): string => (lines > 0 ? `${ESC}[${lines}A
 export const clearLine = `\r${ESC}[K`;
 export const hideCursor = `${ESC}[?25l`;
 export const showCursor = `${ESC}[?25h`;
+export const saveCursor = `${ESC}7`;
+export const restoreCursor = `${ESC}8`;
+export const upOneLine = `${ESC}[1A`;

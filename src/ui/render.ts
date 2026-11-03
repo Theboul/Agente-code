@@ -1,4 +1,4 @@
-import { c, clearLine, padEnd, termWidth, truncate } from './ansi.js';
+import { c, clearLine, padEnd, restoreCursor, saveCursor, termWidth, truncate, upOneLine } from './ansi.js';
 import { box } from './box.js';
 
 type Out = { write(chunk: string): unknown; isTTY?: boolean };
@@ -144,9 +144,22 @@ export class Ui {
     this.write(`${box(lines, { width: Math.min(termWidth(), 80), border: c.cyan }).join('\n')}\n`);
   }
 
+  /** Regla sobre la línea de entrada, con el modo de permisos: "── modo: … · Shift+Tab cambia ────". */
+  rule(label?: string): string {
+    if (!label) return c.gray('─'.repeat(termWidth()));
+    const text = ` ${label} `;
+    return `${c.gray('──')}${c.dim(text)}${c.gray('─'.repeat(Math.max(2, termWidth() - 2 - [...text].length)))}`;
+  }
+
   /** Línea de entrada: regla superior y "›" como prompt. */
-  prompt(): string {
-    return `\n${c.gray('─'.repeat(termWidth()))}\n${c.bold('›')} `;
+  prompt(label?: string): string {
+    return `\n${this.rule(label)}\n${c.bold('›')} `;
+  }
+
+  /** Redibuja la regla sin tocar lo que el usuario ya escribió (solo si la entrada cabe en una línea). */
+  redrawRule(label: string, typed: number): void {
+    if (!this.out.isTTY || typed + 4 >= termWidth()) return;
+    this.write(`${saveCursor}${upOneLine}\r${clearLine}${this.rule(label)}${restoreCursor}`);
   }
 
   text(delta: string): void {

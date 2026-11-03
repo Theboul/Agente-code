@@ -94,6 +94,14 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 - **Teclas:** `Esc` o `Ctrl+C` interrumpen al modelo; `Ctrl+C` dos veces en reposo sale. Las decisiones del flujo (aprobar el plan, aceptar el diff, commit, push, PR) usan el mismo selector.
 - Sin terminal interactiva (pipes, CI) los diálogos rechazan por seguridad; usa `--yes` o `--ship`. Los colores se desactivan con `NO_COLOR`.
 
+## Menos teclas
+
+- **Atajos:** `agente PROJ-123` (también `#45`, una URL o un `.md`) arranca el flujo directo, sin escribir `work`. `agente "explica el módulo de pagos"` abre la sesión con esa pregunta. Si te equivocas en un comando (`agente isues`) te sugiere el correcto.
+- **`/work` sin argumentos** abre la lista de issues (`/issues`).
+- **Modos de permisos con Shift+Tab** (se ve en la regla sobre la entrada y con `/mode`): *preguntar* (diálogo en cada cambio), *aceptar ediciones solas* (editar y crear archivos sin preguntar; borrar, mover y comandos siguen preguntando) y *solo plan* (ningún cambio ni comando; el agente solo investiga y propone). Nunca saltan lo bloqueado por seguridad.
+- **En el plan del flujo** hay una opción "Sí, y aceptar las ediciones solas durante este flujo": vale solo para ese flujo y el modo anterior se restaura al terminar.
+- **Tab** completa comandos (`/mo` → `/mode`), claves de issues tras `/work`, ramas tras `/ship`, modelos tras `/model`, roles y modos. **↑** recupera lo que escribiste, también de sesiones anteriores (`~/.agente/history`, solo legible por ti; cambia la carpeta con `AGENTE_HOME`).
+
 ## Flujo `agente work`
 
 Es el mismo flujo que usan los demás arneses de código:

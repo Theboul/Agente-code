@@ -87,7 +87,7 @@ export function createPermissionPrompter(deps: PrompterDeps): (req: PermissionRe
   };
 }
 
-export type DecisionReply = { kind: 'approve' } | { kind: 'cancel' } | { kind: 'feedback'; text: string };
+export type DecisionReply = { kind: 'approve'; allowEdits?: boolean } | { kind: 'cancel' } | { kind: 'feedback'; text: string };
 
 /** Cuadro con opciones numeradas para las decisiones del flujo (plan, revisión, commit, push, PR). */
 export function renderDecision(p: DecisionPrompt, options: string[], selected: number, width: number): string[] {
@@ -105,7 +105,7 @@ export function createDecisionPrompter(deps: PrompterDeps): (p: DecisionPrompt) 
   return async (p) => {
     if (!deps.interactive()) return { kind: 'cancel' };
     deps.onOpen?.();
-    const options = [p.approve, ...(p.feedback ? [p.feedback] : []), p.cancel];
+    const options = [p.approve, ...(p.approveWithEdits ? [p.approveWithEdits] : []), ...(p.feedback ? [p.feedback] : []), p.cancel];
     const choice = await selectIndex({
       count: options.length,
       render: (sel) => renderDecision(p, options, sel, termWidth()),
@@ -117,9 +117,10 @@ export function createDecisionPrompter(deps: PrompterDeps): (p: DecisionPrompt) 
       deps.out.write(`${c.red('✖')} ${p.title} ${c.dim('· no')}\n`);
       return { kind: 'cancel' };
     }
-    if (options[choice] === p.approve) {
-      deps.out.write(`${c.green('✔')} ${p.title} ${c.dim('· sí')}\n`);
-      return { kind: 'approve' };
+    if (options[choice] === p.approve || options[choice] === p.approveWithEdits) {
+      const allowEdits = options[choice] === p.approveWithEdits;
+      deps.out.write(`${c.green('✔')} ${p.title} ${c.dim(allowEdits ? '· sí, ediciones automáticas' : '· sí')}\n`);
+      return allowEdits ? { kind: 'approve', allowEdits } : { kind: 'approve' };
     }
     const text = (await deps.ask(c.dim('Escribe qué cambiar\n› ')))?.trim();
     return text ? { kind: 'feedback', text } : { kind: 'cancel' };

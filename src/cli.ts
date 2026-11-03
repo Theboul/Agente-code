@@ -6,14 +6,17 @@ import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { runChat } from './chat.js';
 import { type Config, loadConfig, modelFor, ROLES, type Role } from './config.js';
-import { currentBranch, repoRoot } from './git.js';
+import { currentBranch, git, repoRoot } from './git.js';
+import { parseInvocation } from './invocation.js';
 import { connectMcpServers, type McpConnections } from './mcp/client.js';
-import type { Permissions } from './permissions.js';
+import { MODES, type Permissions } from './permissions.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c, termWidth } from './ui/ansi.js';
 import { box } from './ui/box.js';
+import { type CompletionState, createCompleter } from './ui/complete.js';
 import { createDecisionPrompter, createPermissionPrompter } from './ui/dialog.js';
+import { defaultHistoryFile, loadHistory } from './ui/history.js';
 import { Interrupt } from './ui/interrupt.js';
 import { Ui } from './ui/render.js';
 import { selectIndex, stdinKeys } from './ui/select.js';
@@ -28,7 +31,9 @@ import { detectVerifyCommands } from './workflow/verify.js';
 const HELP = `agente — arnés de código multi-modelo
 
 Uso:
-  agente [chat]                  Sesión interactiva en el directorio actual
+  agente                         Sesión interactiva en el directorio actual
+  agente "pregunta"              Abre la sesión con ese primer mensaje
+  agente PROJ-123                Atajo de "work": también #45, una URL o un archivo .md
   agente work <issue>            Flujo completo: plan → rama → implementación → verificación → revisión
                                  <issue> = PROJ-123 | #45 | URL (vía MCP), archivo .md/.txt, o texto libre
   agente ship [rama]             Commit → push → PR → sincroniza el tracker (tras "work")
@@ -47,7 +52,8 @@ Opciones:
   -y, --yes                   Aprobar planes, ediciones y comandos sin preguntar
   -h, --help
 
-Dentro del chat: /model <prov/modelo>, /role <rol>, /mcp, /clear, /exit
+Dentro de la sesión: /work, /issues, /ship, /mode, /model, /role, /mcp, /status, /clear, /help, /exit
+  Tab completa comandos, issues y ramas · Shift+Tab cambia el modo de permisos · ↑ recupera lo escrito
 Configuración: agente.config.json (ver README).`;
 
 const dim = c.dim;
@@ -68,21 +74,47 @@ const { values, positionals } = parseArgs({
   },
 });
 
+const SLASH_COMMANDS = ['/work', '/issues', '/ship', '/mode', '/model', '/role', '/mcp', '/status', '/clear', '/help', '/exit'];
+
+/** Ramas locales creadas por el flujo (con el prefijo configurado), para completar `/ship <Tab>`. */
+async function localBranches(root: string, prefix: string): Promise<string[]> {
+  const r = await git(root, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${prefix}*`]).catch(() => undefined);
+  return r?.code === 0 ? r.stdout.split('\n').filter(Boolean) : [];
+}
+
 async function main() {
   if (values.help) return console.log(HELP);
-  const cmd = positionals[0] ?? 'chat';
-  if (!['chat', 'work', 'ship', 'issues', 'init'].includes(cmd)) {
-    console.error(`Comando desconocido: ${cmd}\n\n${HELP}`);
+  const cwd = process.cwd();
+  const inv = parseInvocation(positionals, cwd);
+  if (inv.suggest) {
+    console.error(
+      `"${positionals[0]}" no es un comando. ¿Quisiste decir \`agente ${inv.suggest}\`?\n(Para preguntarle eso al agente: agente "${positionals[0]} ...")`,
+    );
     process.exitCode = 1;
     return;
   }
-
-  const cwd = process.cwd();
+  const cmd = inv.cmd;
   if (cmd === 'init') return init(cwd);
 
   const config = await loadConfig(cwd);
   const root = (await repoRoot(cwd)) ?? cwd;
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // Autocompletado con Tab e historial entre sesiones (solo en una terminal interactiva).
+  const completion: CompletionState = {
+    commands: SLASH_COMMANDS,
+    issues: [],
+    branches: await localBranches(root, config.workflow.branchPrefix),
+    models: [...new Set([config.model, ...Object.values(config.roles), 'anthropic/claude-sonnet-5-5', 'anthropic/claude-haiku-5-5'])],
+    roles: [...ROLES],
+    modes: [...MODES],
+    suppress: false,
+  };
+  const historyFile = process.stdin.isTTY && cmd === 'chat' ? defaultHistoryFile() : undefined;
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    completer: createCompleter(() => completion),
+    ...(historyFile ? { history: await loadHistory(historyFile), historySize: 500 } : {}),
+  });
   const ui = new Ui();
   const interrupt = new Interrupt();
   // Ctrl+C: interrumpe el turno en curso; en reposo pide repetirlo para salir.
@@ -95,6 +127,7 @@ async function main() {
   });
 
   const perms: Permissions = {
+    mode: 'ask',
     autoApprove: values.yes ?? false,
     allowedCommands: [...config.allowedCommands, ...(config.workflow.verify ?? detectVerifyCommands(root))],
     confirm: async (q) => {
@@ -117,7 +150,7 @@ async function main() {
   const mcp = await connectMcpServers(config.mcpServers, perms);
   for (const s of mcp.status) if (!s.ok) ui.warn(`MCP ${s.name}: ${s.error}`);
 
-  const ctx: Ctx = { cwd, root, config, perms, mcp, rl, ui, interrupt };
+  const ctx: Ctx = { cwd, root, config, perms, mcp, rl, ui, interrupt, completion };
   try {
     if (cmd === 'chat') {
       await runChat({
@@ -131,14 +164,17 @@ async function main() {
         model: values.model,
         role: values.role as Role | undefined,
         prompt: values.prompt,
+        initialPrompt: inv.initialPrompt,
+        completion,
+        historyFile,
         handlers: {
           work: async (ref) => startWork(ctx, await resolveIssue(ctx, ref)),
           issues: () => issues(ctx),
           ship: (branch) => shipBranch(ctx, branch),
         },
       });
-    } else if (cmd === 'work') await work(ctx);
-    else if (cmd === 'ship') await shipBranch(ctx, positionals[1]);
+    } else if (cmd === 'work') await work(ctx, inv.args);
+    else if (cmd === 'ship') await shipBranch(ctx, inv.args[0]);
     else await issues(ctx);
   } finally {
     rl.close();
@@ -155,6 +191,7 @@ interface Ctx {
   rl: ReturnType<typeof createInterface>;
   ui: Ui;
   interrupt: Interrupt;
+  completion: CompletionState;
 }
 
 /** Un turno del agente para el flujo (plan, implementación, redacción…), con la salida visual de la sesión. */
@@ -212,6 +249,9 @@ function workflowIO(ctx: Ctx) {
   });
   return {
     choose,
+    allowEdits: () => {
+      ctx.perms.mode = 'edits';
+    },
     say: (m: string) => console.log(m),
     ask: async (q: string) => {
       if (!process.stdin.isTTY) throw new Error('Se necesita una terminal interactiva para aprobar (o usa --yes / --ship).');
@@ -221,6 +261,16 @@ function workflowIO(ctx: Ctx) {
 }
 
 async function startWork(ctx: Ctx, issue: Issue) {
+  // "Aceptar las ediciones solas" elegido en el plan vale solo durante este flujo.
+  const modeBefore = ctx.perms.mode;
+  try {
+    await runWork(ctx, issue);
+  } finally {
+    ctx.perms.mode = modeBefore;
+  }
+}
+
+async function runWork(ctx: Ctx, issue: Issue) {
   const result = await runWorkflow({
     cwd: ctx.cwd,
     config: ctx.config,
@@ -283,8 +333,8 @@ async function shipBranch(ctx: Ctx, branchArg?: string) {
   await deliver(ctx, { ...rec, workdir: existsSync(rec.workdir) ? rec.workdir : root, runFile: file });
 }
 
-async function work(ctx: Ctx) {
-  const ref = positionals.slice(1).join(' ').trim();
+async function work(ctx: Ctx, args: string[]) {
+  const ref = args.join(' ').trim();
   if (!ref) throw new Error('Indica la tarea: agente work PROJ-123 | archivo.md | "texto libre"');
   await startWork(ctx, await resolveIssue(ctx, ref));
 }
@@ -308,6 +358,7 @@ async function issues(ctx: Ctx) {
       c.dim('  ↑↓ elegir · Enter trabajar en ella · Esc salir'),
     ],
   });
+  ctx.completion.issues = list.flatMap((i) => (i.key ? [i.key] : []));
   if (choice === 'cancel') return;
   const chosen = list[choice];
   if (!chosen) return;

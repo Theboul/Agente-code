@@ -5,10 +5,12 @@ import { buildSystemPrompt } from './agent/system.js';
 import { type Config, modelFor, ROLES, type Role } from './config.js';
 import { currentBranch } from './git.js';
 import type { McpConnections } from './mcp/client.js';
-import { authorizeDetailed, denialMessage, type Permissions } from './permissions.js';
+import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type PermissionMode, type Permissions } from './permissions.js';
 import { nativeTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c } from './ui/ansi.js';
+import type { CompletionState } from './ui/complete.js';
+import { appendHistory } from './ui/history.js';
 import type { Interrupt } from './ui/interrupt.js';
 import type { Ui } from './ui/render.js';
 
@@ -31,13 +33,20 @@ export interface ChatDeps {
   role?: Role;
   /** Un solo turno y salir (-p). */
   prompt?: string;
+  /** Primer mensaje de la sesión (`agente "pregunta"`); después sigue interactiva. */
+  initialPrompt?: string;
+  /** Estado del autocompletado con Tab; la sesión lo mantiene al día. */
+  completion: CompletionState;
+  /** Archivo donde se guarda el historial de lo escrito (flecha arriba entre sesiones). */
+  historyFile?: string;
   handlers: ChatHandlers;
 }
 
 const COMMANDS: [string, string][] = [
-  ['/work <issue>', 'Flujo completo: plan → rama → código → verificación → revisión (PROJ-123, #45, URL, archivo .md o texto)'],
+  ['/work [issue]', 'Flujo completo: plan → rama → código → verificación → revisión. Sin argumento abre /issues'],
   ['/issues', 'Lista las issues del tracker (MCP) y te deja elegir una'],
   ['/ship [rama]', 'Commit → push → PR → actualiza el tracker'],
+  ['/mode [ask|edits|plan]', 'Modo de permisos (Shift+Tab lo cambia): preguntar, aceptar ediciones solas, solo plan'],
   ['/model <prov/modelo>', 'Cambia de modelo'],
   ['/role <plan|implement|light>', 'Usa el modelo configurado para un rol'],
   ['/mcp', 'Estado y herramientas de los servidores MCP'],
@@ -107,6 +116,19 @@ export async function runChat(d: ChatDeps): Promise<void> {
 
   const branch = await currentBranch(cwd).catch(() => undefined);
   ui.banner({ model: modelId, cwd, branch, mcp: Object.keys(mcp.tools).length || undefined });
+  const modeLabel = () => `modo: ${MODE_LABEL[perms.mode ?? 'ask']} · Shift+Tab cambia`;
+  d.completion.suppress = false;
+
+  // Shift+Tab cambia el modo. Se escucha antes que readline para marcar que no es un Tab de completado.
+  const onKey = (_s: string | undefined, key: { name?: string; shift?: boolean } | undefined) => {
+    if (key?.name !== 'tab' || !key.shift) return;
+    d.completion.suppress = true;
+    perms.mode = nextMode(perms.mode ?? 'ask');
+    ui.redrawRule(modeLabel(), rl.line.length);
+  };
+  if (process.stdin.isTTY) process.stdin.prependListener('keypress', onKey);
+
+  if (d.initialPrompt) await turn(d.initialPrompt);
 
   const printMcp = () => {
     if (!mcp.status.length) return ui.notice('Sin servidores MCP configurados (mcpServers en agente.config.json).');
@@ -124,6 +146,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
       case '/salir':
       case '/quit':
         return false;
+      case '/':
       case '/help':
       case '/?':
         ui.table(COMMANDS);
@@ -136,7 +159,17 @@ export async function runChat(d: ChatDeps): Promise<void> {
         printMcp();
         break;
       case '/status':
-        ui.notice(`modelo: ${modelId}\ncarpeta: ${cwd}${branch ? ` (${branch})` : ''}\nhistorial: ${history.length} mensajes`);
+        ui.notice(
+          `modelo: ${modelId}\nmodo: ${MODE_LABEL[perms.mode ?? 'ask']}\ncarpeta: ${cwd}${branch ? ` (${branch})` : ''}\nhistorial: ${history.length} mensajes`,
+        );
+        break;
+      case '/mode':
+        if (!arg) ui.notice(`Modo: ${MODE_LABEL[perms.mode ?? 'ask']}. Opciones: ${MODES.join(', ')} (o Shift+Tab)`);
+        else if (!MODES.includes(arg as PermissionMode)) ui.warn(`Modo inválido. Opciones: ${MODES.join(', ')}`);
+        else {
+          perms.mode = arg as PermissionMode;
+          ui.notice(`Modo: ${MODE_LABEL[perms.mode]}`);
+        }
         break;
       case '/model':
         if (!arg) ui.notice(`Modelo actual: ${modelId}. Uso: /model <proveedor/modelo>`);
@@ -153,7 +186,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
         }
         break;
       case '/work':
-        if (!arg) ui.warn('Indica la tarea: /work PROJ-123 | archivo.md | descripción');
+        if (!arg) await guarded(() => handlers.issues());
         else await guarded(() => handlers.work(arg));
         break;
       case '/issues':
@@ -181,16 +214,18 @@ export async function runChat(d: ChatDeps): Promise<void> {
     const quit = new AbortController();
     interrupt.onQuit(() => quit.abort());
     try {
-      line = (await rl.question(ui.prompt(), { signal: quit.signal })).trim();
+      line = (await rl.question(ui.prompt(modeLabel()), { signal: quit.signal })).trim();
     } catch {
       break; // stdin cerrado o Ctrl+C repetido
     } finally {
       interrupt.onQuit(undefined);
     }
     if (!line) continue;
+    if (d.historyFile) await appendHistory(d.historyFile, line);
     if (line.startsWith('/')) {
       if (!(await command(line))) break;
     } else await turn(line);
   }
+  process.stdin.off('keypress', onKey);
   ui.notice(c.dim('Hasta pronto.'));
 }
