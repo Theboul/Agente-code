@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { McpServerConfig } from '../src/config.js';
-import { connectMcpServers, expandEnv, type McpConnections, needsApproval, toolName } from '../src/mcp/client.js';
+import { cleanEnv, connectMcpServers, expandEnv, type McpConnections, needsApproval, toolName } from '../src/mcp/client.js';
 import type { Permissions } from '../src/permissions.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-mcp.mjs', import.meta.url));
@@ -58,4 +58,24 @@ describe('servidor MCP real por stdio', () => {
     expect(denied).toBe('DENEGADO por el usuario.');
     expect(asked).toHaveLength(1);
   }, 30_000);
+});
+
+describe('entorno de los servidores MCP locales', () => {
+  it('pasa lo necesario para arrancar y salir a internet, y nunca las claves', () => {
+    const env = cleanEnv({
+      PATH: '/usr/bin',
+      HTTPS_PROXY: 'http://proxy:3128',
+      NODE_EXTRA_CA_CERTS: '/ca.pem',
+      USERPROFILE: 'C:\\Users\\yo',
+      APPDATA: 'C:\\Users\\yo\\AppData',
+      GOOGLE_GENERATIVE_AI_API_KEY: 'secreta',
+      ANTHROPIC_API_KEY: 'secreta',
+      JIRA_API_TOKEN: 'secreta',
+      GITHUB_TOKEN: 'secreta',
+    });
+    expect(env).toMatchObject({ PATH: '/usr/bin', HTTPS_PROXY: 'http://proxy:3128', NODE_EXTRA_CA_CERTS: '/ca.pem' });
+    expect(Object.keys(env)).toContain('USERPROFILE');
+    expect(Object.keys(env)).toContain('APPDATA');
+    expect(JSON.stringify(env)).not.toContain('secreta');
+  });
 });

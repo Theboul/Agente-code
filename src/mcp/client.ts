@@ -85,10 +85,48 @@ async function connectOne(name: string, cfg: McpServerConfig, perms: Permissions
   }
 }
 
-/** Solo variables seguras del entorno para procesos stdio (sin filtrar claves de modelos). */
-function cleanEnv(): Record<string, string> {
-  const keep = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM', 'TMPDIR', 'NODE_PATH', 'SystemRoot'];
-  return Object.fromEntries(keep.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]!]] : [])));
+// Lo mínimo para que un servidor local arranque y llegue a internet. Las claves de modelos y demás secretos NO pasan.
+const PASS_THROUGH = [
+  // sistema
+  'PATH',
+  'HOME',
+  'USER',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'NODE_PATH',
+  // Windows (npx y Node los necesitan para encontrar su caché y sus programas)
+  'SystemRoot',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'PATHEXT',
+  'COMSPEC',
+  'ProgramFiles',
+  'ProgramData',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  // red: proxys y certificados propios (redes corporativas); sin ellos el servidor no saldría a internet
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_USE_ENV_PROXY',
+];
+
+/** Entorno con el que arrancan los servidores MCP locales: solo lo de PASS_THROUGH. */
+export function cleanEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return Object.fromEntries(PASS_THROUGH.flatMap((k) => (env[k] !== undefined ? [[k, env[k]!]] : [])));
 }
 
 /** Conecta todos los servidores en paralelo; un servidor caído no impide usar el resto. */
