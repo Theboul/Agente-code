@@ -19,6 +19,8 @@ export type StageRunner = (a: {
   tools: ToolScope;
   workdir: string;
   messages: ModelMessage[];
+  /** Consulta interna (p. ej. al tracker): no se muestra el texto del modelo, solo las herramientas. */
+  quiet?: boolean;
 }) => Promise<{ text: string; newMessages: ModelMessage[] }>;
 
 /** Decisión que se le plantea al usuario en el flujo (aprobar el plan, aceptar el diff, confirmar el push…). */

@@ -1,6 +1,6 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { CONFIG_FILE, type Config, McpServerSchema } from '../config.js';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { CONFIG_FILE, type Config, globalConfigFile, McpServerSchema } from '../config.js';
 import { credentialsFile, maskSecret, saveCredential } from '../credentials.js';
 import type { McpConnections } from '../mcp/client.js';
 import { checkApiKey, DEFAULT_KEY_ENV, PROVIDER_HELP, parseModelId } from '../providers.js';
@@ -23,6 +23,8 @@ export interface ConnectDeps {
   config: Config;
   presets?: Preset[];
   credFile?: string;
+  /** Dónde se escribe el servidor. Por defecto la configuración global (~/.agente/config.json): conectas una vez y sirve en todos tus proyectos. */
+  configFile?: string;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
@@ -129,10 +131,11 @@ export async function connectTracker(d: ConnectDeps, which?: string): Promise<bo
     }
   }
 
-  const path = join(d.cwd, CONFIG_FILE);
+  const path = d.configFile ?? globalConfigFile();
   const current = await readFile(path, 'utf8').catch(() => undefined);
+  await mkdir(dirname(path), { recursive: true });
   await writeFile(path, mergeServer(current, preset.id, { ...server, ...(autoApprove.length ? { autoApprove } : {}) }));
-  ui.notice(`✔ ${preset.label} configurado en ${CONFIG_FILE}${status?.ok ? '. Prueba: /issues' : ''}`);
+  ui.notice(`✔ ${preset.label} configurado en ${path} (vale para todos tus proyectos)${status?.ok ? '. Prueba: /issues' : ''}`);
   return Boolean(status?.ok);
 }
 

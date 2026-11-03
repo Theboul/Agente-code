@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -140,6 +140,25 @@ describe('presets y herramientas de lectura', () => {
   });
 });
 
+describe('configuración global', () => {
+  it('mezcla la global con la del proyecto: el proyecto manda y los objetos se combinan', async () => {
+    const dir = tmp('cfg-');
+    const global = join(dir, 'global.json');
+    writeFileSync(global, JSON.stringify({ model: 'google/a', roles: { plan: 'google/p' }, mcpServers: { jira: { command: 'g' }, otro: { command: 'o' } } }));
+    writeFileSync(join(dir, 'agente.config.json'), JSON.stringify({ model: 'anthropic/b', mcpServers: { jira: { command: 'p' } } }));
+    const cfg = await loadConfig(dir, global);
+    expect(cfg.model).toBe('anthropic/b');
+    expect(cfg.roles.plan).toBe('google/p');
+    expect(Object.keys(cfg.mcpServers).sort()).toEqual(['jira', 'otro']);
+    expect(cfg.mcpServers.jira?.command).toBe('p');
+    expect(cfg.mcpServers.otro?.command).toBe('o');
+  });
+
+  it('funciona sin ninguno de los dos archivos', async () => {
+    expect((await loadConfig(tmp('cfg-'), join(tmp('nada-'), 'no-existe.json'))).mcpServers).toEqual({});
+  });
+});
+
 describe('/connect: flujo guiado', () => {
   const fakeMcp = (result: McpServerStatus) => {
     const added: Record<string, unknown>[] = [];
@@ -166,6 +185,7 @@ describe('/connect: flujo guiado', () => {
       mcp: o.mcp,
       config: await loadConfig(cwd),
       credFile: join(tmp('cred-'), 'credentials'),
+      configFile: join(cwd, 'agente.config.json'),
       env: o.env ?? {},
     };
     return { d, cwd, asked, sk };

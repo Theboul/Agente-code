@@ -27,6 +27,10 @@ function tempRepo(files: Record<string, string> = {}): string {
 describe('piezas del flujo', () => {
   it('slugify y nombres de rama', () => {
     expect(slugify('¡Arreglar el Login, ya!')).toBe('arreglar-el-login-ya');
+    // un corte a mitad de palabra retrocede hasta la palabra anterior
+    expect(slugify('anadir average numbers a src math js promedio', 30)).toBe('anadir-average-numbers-a-src');
+    expect(slugify('uno dos tres cuatro', 12)).toBe('uno-dos-tres'); // el corte cae justo en un guion
+    expect(slugify('supercalifragilisticoespialidoso', 10)).toBe('supercalif'); // una sola palabra larga se corta igual
     expect(branchNameFor({ key: 'PROJ-123', title: 'Añadir caché', body: '' }, 'feat/')).toBe('feat/proj-123-anadir-cache');
     expect(branchNameFor({ title: '***', body: '' }, 'fix/')).toBe('fix/');
   });

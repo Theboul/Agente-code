@@ -251,6 +251,11 @@ describe('presentación de la sesión', () => {
       tone: 'denied',
     });
     expect(summarizeResult('mcp__x__y', { a: 1 }).text).toBe('{"a":1}');
+    const mcp = (text: string) => ({ content: [{ type: 'text', text }] });
+    expect(summarizeResult('mcp__t__list_issues', mcp('[{"key":"A-1"},{"key":"A-2"}]')).text).toBe('2 elementos');
+    expect(summarizeResult('mcp__t__list_issues', mcp('[{"key":"A-1"}]')).text).toBe('1 elemento');
+    expect(summarizeResult('mcp__t__get_issue', mcp('{"key":"A-1","title":"x"}')).text).toBe('{ key, title }');
+    expect(summarizeResult('mcp__t__add_comment', mcp('comentado A-1\notra línea')).text).toBe('comentado A-1');
   });
 
   it('da formato inline de Markdown', () => {

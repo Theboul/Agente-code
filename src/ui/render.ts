@@ -39,6 +39,25 @@ export interface ResultSummary {
 
 const firstLine = (s: string) => s.trim().split('\n')[0] ?? '';
 
+/** Texto de un resultado MCP ({ content: [{ type: "text", text }] }), resumido: "2 elementos" si es JSON, o su primera línea. */
+function mcpText(output: unknown): string | undefined {
+  const content = record(output).content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map((p) => (p && typeof p === 'object' && typeof (p as { text?: unknown }).text === 'string' ? (p as { text: string }).text : ''))
+    .join('\n')
+    .trim();
+  if (!text) return undefined;
+  try {
+    const json: unknown = JSON.parse(text);
+    if (Array.isArray(json)) return `${json.length} elemento${json.length === 1 ? '' : 's'}`;
+    if (json && typeof json === 'object') return `{ ${Object.keys(json).slice(0, 5).join(', ')} }`;
+  } catch {
+    /* no es JSON: se muestra el texto */
+  }
+  return text;
+}
+
 /** Resumen de una línea del resultado de una herramienta, como el "⎿" de Claude Code. */
 export function summarizeResult(tool: string, output: unknown): ResultSummary {
   if (typeof output === 'string') {
@@ -75,7 +94,7 @@ export function summarizeResult(tool: string, output: unknown): ResultSummary {
     case 'web_fetch':
       return { text: `${String(o.text ?? '').length} caracteres leídos`, tone: 'plain' };
     default:
-      return { text: truncate(firstLine(JSON.stringify(output) ?? ''), 100), tone: 'plain' };
+      return { text: truncate(firstLine(mcpText(output) ?? JSON.stringify(output) ?? ''), 100), tone: 'plain' };
   }
 }
 

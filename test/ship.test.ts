@@ -209,4 +209,31 @@ describe('entrega: commit → push → PR → tracker', () => {
     expect(found?.rec.shipped).toMatchObject({ pushed: true, prUrl: 'https://github.com/o/r/pull/3' });
     expect(await findRun(dir, 'otra')).toBeUndefined();
   });
+
+  it('con "commit y push" ya aprobado no vuelve a preguntar por el push; el PR sigue siendo una decisión aparte', async () => {
+    const { dir, origin } = setup();
+    const asked: string[] = [];
+    const io = { say: () => {}, ask: async (q: string) => (asked.push(q), asked.length === 1 ? 'a' : 'x') };
+    const res = await ship({
+      ...base(dir),
+      config: await loadConfig(dir),
+      io,
+      runStage: fakeStage(),
+      pushConfirmed: true,
+      createPr: async () => ({ method: 'gh', url: 'https://github.com/o/r/pull/9' }),
+    });
+    expect(asked).toHaveLength(2); // mensaje de commit y PR; ningún "¿subir la rama?"
+    expect(asked.some((q) => q.includes('Subir la rama'))).toBe(false);
+    expect(res).toMatchObject({ pushed: true });
+    expect(res.prUrl).toBeUndefined(); // el usuario dijo que no al PR
+    expect(sh(origin, 'rev-parse', 'feat/proj-1-algo')).toBe(sh(dir, 'rev-parse', 'HEAD'));
+  });
+
+  it('con diálogo de decisión no repite el mensaje de commit como texto suelto', async () => {
+    const { dir } = setup();
+    const log: string[] = [];
+    const io = { say: (m: string) => void log.push(m), ask: async () => 'a', choose: async () => ({ kind: 'approve' as const }) };
+    await ship({ ...base(dir), config: await loadConfig(dir), io, runStage: fakeStage(), pushConfirmed: true, createPr: async () => ({ method: 'manual' }) });
+    expect(log.join('\n')).not.toContain('Mensaje de commit');
+  });
 });

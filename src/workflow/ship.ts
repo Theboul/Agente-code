@@ -24,6 +24,8 @@ export interface ShipOptions {
   mcpToolNames: string[];
   /** Sin confirmaciones intermedias (--ship). */
   auto?: boolean;
+  /** El usuario ya aprobó "commit y push" antes de llamar: no se vuelve a preguntar por el push (el PR sí se decide aparte). */
+  pushConfirmed?: boolean;
   draft?: boolean;
   runFile?: string;
   sleep?: (ms: number) => Promise<void>;
@@ -128,12 +130,14 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
       });
       message = sanitizeMessage(r.text);
       if (!message) throw new Error('El modelo no generó un mensaje de commit.');
-      io.say(
-        `\nMensaje de commit:\n${message
-          .split('\n')
-          .map((l) => `  │ ${l}`)
-          .join('\n')}`,
-      );
+      // Con diálogo, el mensaje ya se muestra dentro del cuadro de decisión.
+      if (!io.choose)
+        io.say(
+          `\nMensaje de commit:\n${message
+            .split('\n')
+            .map((l) => `  │ ${l}`)
+            .join('\n')}`,
+        );
       const reply = await ask('\n¿Confirmar con este mensaje?  [a]probar · [x] cancelar · o escribe cómo cambiarlo: ', {
         title: 'Commit',
         detail: message.split('\n'),
@@ -169,12 +173,14 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
 
   // ── 2. PUSH ─────────────────────────────────────────────────────────────────
   io.say('\n━━ Entrega 2/4 · Push ━━');
-  const go = await ask(`\n¿Subir la rama ${branch} a ${wf.remote}?  [a]sí · [x] parar aquí: `, {
-    title: 'Push',
-    detail: [`${branch} → ${wf.remote}`],
-    approve: `Sí, subir la rama a ${wf.remote}`,
-    cancel: 'No, parar aquí (queda el commit local)',
-  });
+  const go = o.pushConfirmed
+    ? ({ kind: 'approve' } as const)
+    : await ask(`\n¿Subir la rama ${branch} a ${wf.remote}?  [a]sí · [x] parar aquí: `, {
+        title: 'Push',
+        detail: [`${branch} → ${wf.remote}`],
+        approve: `Sí, subir la rama a ${wf.remote}`,
+        cancel: 'No, parar aquí (queda el commit local)',
+      });
   if (go.kind !== 'approve') {
     io.say(`Quedó el commit local. Súbelo después con: agente ship (o git push -u ${wf.remote} ${branch})`);
     await record(o, result);

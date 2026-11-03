@@ -80,14 +80,16 @@ export async function fullDiff(cwd: string): Promise<{ stat: string; patch: stri
 
 /** "Arreglar el Login!" → "arreglar-el-login" (sin acentos, máx. 40 caracteres). */
 export function slugify(text: string, max = 40): string {
-  return text
+  const full = text
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, max)
-    .replace(/-+$/, '');
+    .replace(/^-+|-+$/g, '');
+  if (full.length <= max) return full;
+  // Si el corte cae a mitad de palabra, se retrocede hasta el último guion (sin dejar menos de la mitad).
+  const cut = full[max] === '-' ? full.slice(0, max) : full.slice(0, max).replace(/-[^-]*$/, '');
+  return (cut.length >= max / 2 ? cut : full.slice(0, max)).replace(/-+$/, '');
 }
 
 export async function remoteUrl(cwd: string, remote: string): Promise<string | undefined> {

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { agenteHome } from './credentials.js';
 
 /** Roles de modelo: cada etapa del flujo puede usar un modelo distinto. */
 export const ROLES = ['plan', 'implement', 'light'] as const;
@@ -92,14 +93,33 @@ export type Config = z.infer<typeof ConfigSchema>;
 
 export const CONFIG_FILE = 'agente.config.json';
 
-export async function loadConfig(cwd: string): Promise<Config> {
-  let raw = '{}';
+/** Configuración global del usuario (vale para todos sus proyectos). La escribe /connect. */
+export const globalConfigFile = (): string => join(agenteHome(), 'config.json');
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Mezcla en profundidad: los objetos se combinan clave a clave y lo demás (listas, valores) lo reemplaza `over`. */
+export function mergeConfig(base: Record<string, unknown>, over: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(over)) out[k] = isPlainObject(v) && isPlainObject(out[k]) ? mergeConfig(out[k] as Record<string, unknown>, v) : v;
+  return out;
+}
+
+async function readJson(file: string): Promise<Record<string, unknown>> {
   try {
-    raw = await readFile(join(cwd, CONFIG_FILE), 'utf8');
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+    if (!isPlainObject(parsed)) throw new Error(`${file} no es un objeto JSON.`);
+    return parsed;
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw e;
   }
-  return ConfigSchema.parse(JSON.parse(raw));
+}
+
+/** Configuración efectiva: global del usuario (~/.agente/config.json) y encima la del proyecto (agente.config.json). */
+export async function loadConfig(cwd: string, globalFile: string = globalConfigFile()): Promise<Config> {
+  const merged = mergeConfig(await readJson(globalFile), await readJson(join(cwd, CONFIG_FILE)));
+  return ConfigSchema.parse(merged);
 }
 
 /** Modelo efectivo para un rol: rol → modelo por defecto. */

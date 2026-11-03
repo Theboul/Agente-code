@@ -16,8 +16,8 @@ import { MODES, type Permissions } from './permissions.js';
 import { missingKeyHint, PROVIDER_HELP } from './providers.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
-import { c, termWidth } from './ui/ansi.js';
-import { box } from './ui/box.js';
+import { c, termWidth, truncate } from './ui/ansi.js';
+import { box, wrapText } from './ui/box.js';
 import { type CompletionState, createCompleter } from './ui/complete.js';
 import { createDecisionPrompter, createPermissionPrompter } from './ui/dialog.js';
 import { defaultHistoryFile, loadHistory } from './ui/history.js';
@@ -247,7 +247,7 @@ interface Ctx {
 /** Un turno del agente para el flujo (plan, implementación, redacción…), con la salida visual de la sesión. */
 function makeStageRunner(ctx: Ctx): StageRunner {
   const { config, perms, mcp, ui } = ctx;
-  return async ({ role, system, tools, workdir, messages }) => {
+  return async ({ role, system, tools, workdir, messages, quiet }) => {
     const modelId = values.model ?? modelFor(config, role);
     ui.notice(`\n✻ ${role} · ${modelId}`);
     const toolset =
@@ -259,7 +259,7 @@ function makeStageRunner(ctx: Ctx): StageRunner {
             ? mcp.tools
             : { ...mcp.tools, ...nativeTools(workdir, perms, { onTodos: (t) => ui.todos(t) }) };
     // Sin herramientas = redacción de commit/PR: se muestra ya limpia por el flujo, no el texto crudo del modelo.
-    return modelTurn(ctx, { modelId, system, tools: toolset, messages, stream: tools !== 'none' });
+    return modelTurn(ctx, { modelId, system, tools: toolset, messages, stream: tools !== 'none' && !quiet });
   };
 }
 
@@ -275,6 +275,7 @@ async function askTracker(ctx: Ctx, prompt: string): Promise<unknown> {
     tools: 'full',
     workdir: ctx.cwd,
     messages: [{ role: 'user', content: prompt }],
+    quiet: true,
   });
   return extractJson(r.text);
 }
@@ -320,7 +321,31 @@ async function startWork(ctx: Ctx, issue: Issue) {
   }
 }
 
-async function runWork(ctx: Ctx, issue: Issue) {
+/** Muestra la issue elegida y deja explicar algo más (contexto, restricciones, archivos) antes del plan. Enter continúa. */
+async function withExtraContext(ctx: Ctx, issue: Issue): Promise<Issue> {
+  if (!process.stdin.isTTY || values.yes || values.ship) return issue;
+  const body = wrapText(issue.body.trim() || '(sin descripción)', termWidth() - 6);
+  const shown = body.length > 12 ? [...body.slice(0, 12), '…'] : body;
+  console.log(box(shown, { title: `${issue.key ?? 'Tarea'} · ${truncate(issue.title, 60)}`, width: termWidth(), border: c.cyan }).join('\n'));
+  const lines: string[] = [];
+  let prompt = c.dim(
+    '¿Quieres explicar algo más antes del plan? Contexto, restricciones, archivos a tocar… (Enter para continuar; termina con \\ para seguir en otra línea)\n› ',
+  );
+  for (;;) {
+    const line = (await ctx.rl.question(prompt)).trimEnd();
+    if (!line.endsWith('\\')) {
+      if (line) lines.push(line);
+      break;
+    }
+    lines.push(line.slice(0, -1).trimEnd());
+    prompt = c.dim('… ');
+  }
+  const extra = lines.join('\n').trim();
+  return extra ? { ...issue, body: `${issue.body}\n\n## Contexto adicional del usuario\n${extra}`.trim() } : issue;
+}
+
+async function runWork(ctx: Ctx, original: Issue) {
+  const issue = await withExtraContext(ctx, original);
   const result = await runWorkflow({
     cwd: ctx.cwd,
     config: ctx.config,
@@ -342,16 +367,20 @@ async function runWork(ctx: Ctx, issue: Issue) {
       (
         await workflowIO(ctx).choose({
           title: 'Entrega',
-          detail: [`Rama ${result.branch}`],
-          approve: 'Sí, hacer commit, push y abrir el PR',
-          cancel: 'No, lo entrego después (agente ship)',
+          detail: [`Rama ${result.branch}`, 'Se hace add, commit y push a esa rama. El PR lo decides después.'],
+          approve: 'Sí, hacer commit y push a la rama',
+          cancel: 'No, lo entrego después (/ship)',
         })
       ).kind === 'approve');
-  if (now) await deliver(ctx, result as Required<Pick<typeof result, 'branch' | 'workdir' | 'base' | 'issue' | 'plan'>> & typeof result);
+  if (now)
+    await deliver(ctx, { ...(result as Required<Pick<typeof result, 'branch' | 'workdir' | 'base' | 'issue' | 'plan'>> & typeof result), pushConfirmed: true });
   else console.log(`Cuando quieras entregarlo: agente ship ${result.branch}`);
 }
 
-async function deliver(ctx: Ctx, r: { branch: string; workdir: string; base: string; issue: Issue; plan: string; verified?: boolean; runFile?: string }) {
+async function deliver(
+  ctx: Ctx,
+  r: { branch: string; workdir: string; base: string; issue: Issue; plan: string; verified?: boolean; runFile?: string; pushConfirmed?: boolean },
+) {
   const runStage = makeStageRunner(ctx);
   const res = await ship({
     root: ctx.root ?? ctx.cwd,
@@ -364,6 +393,7 @@ async function deliver(ctx: Ctx, r: { branch: string; workdir: string; base: str
     verified: r.verified,
     runFile: r.runFile,
     auto: values.ship,
+    pushConfirmed: r.pushConfirmed,
     draft: values.draft,
     runStage,
     mcpToolNames: Object.keys(ctx.mcp.tools),
