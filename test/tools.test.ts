@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { runTurn } from '../src/agent/loop.js';
 import type { Permissions } from '../src/permissions.js';
 import { askUserTool, htmlToText, isBlockedHost, webFetchTool } from '../src/tools/extra.js';
-import { GuardedFsProvider, previewChange } from '../src/tools/guarded.js';
+import { GuardedFsProvider, GuardedShellProvider, previewChange } from '../src/tools/guarded.js';
 import { nativeTools, readOnlyTools } from '../src/tools/index.js';
 
 const opts = { toolCallId: 't', messages: [] } as never;
@@ -44,6 +44,34 @@ describe('rutas en las confirmaciones (rel)', () => {
     const { dir, asked, perms } = setup(false);
     await new GuardedFsProvider(dir, perms).remove('.', { recursive: true }).catch(() => {});
     expect(asked[0]).toBe('¿BORRAR . (recursivo)?');
+  });
+});
+
+describe('--yes y comandos de shell', () => {
+  const shell = (perms: Permissions) => new GuardedShellProvider(tmpdir(), perms);
+
+  it('un comando fuera de la lista blanca sigue pidiendo confirmación aunque haya --yes', async () => {
+    const { asked, perms } = setup(false, { autoApprove: true });
+    const r = await shell(perms).exec('echo hola');
+    expect(asked).toEqual(['¿Ejecutar?  $ echo hola']);
+    expect(r.exitCode).toBe(126);
+    expect(r.stderr).toContain('allowedCommands');
+  });
+  it('si el usuario lo aprueba, corre', async () => {
+    const { perms } = setup(true, { autoApprove: true });
+    const r = await shell(perms).exec('echo hola');
+    expect(r).toMatchObject({ exitCode: 0 });
+    expect(r.stdout).toContain('hola');
+  });
+  it('un comando de la lista blanca corre con --yes sin preguntar', async () => {
+    const { asked, perms } = setup(false, { autoApprove: true, allowedCommands: ['echo hola'] });
+    const r = await shell(perms).exec('echo hola');
+    expect(asked).toHaveLength(0);
+    expect(r.exitCode).toBe(0);
+  });
+  it('sin --yes la denegación no menciona allowedCommands', async () => {
+    const { perms } = setup(false);
+    expect((await shell(perms).exec('echo hola')).stderr).not.toContain('allowedCommands');
   });
 });
 

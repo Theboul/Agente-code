@@ -85,7 +85,14 @@ export class GuardedShellProvider implements ShellProvider {
   async exec(command: string, options?: { timeout?: number }): Promise<ShellResult> {
     const decision = classifyCommand(command, this.perms.allowedCommands);
     if (decision === 'deny') return { stdout: '', stderr: 'DENEGADO: comando bloqueado por la política de seguridad.', exitCode: 126 };
-    if (!(await authorize(this.perms, decision, `¿Ejecutar?  $ ${command}`))) return { stdout: '', stderr: DENIED, exitCode: 126 };
+    // --yes no aprueba comandos fuera de la lista blanca: lo no reconocido siempre pasa por una confirmación humana.
+    const strict = { ...this.perms, autoApprove: false };
+    if (!(await authorize(strict, decision, `¿Ejecutar?  $ ${command}`))) {
+      const hint = this.perms.autoApprove
+        ? `${DENIED} Con --yes solo corren los comandos de allowedCommands (agente.config.json); añade el prefijo si es de confianza.`
+        : DENIED;
+      return { stdout: '', stderr: hint, exitCode: 126 };
+    }
     const r = await execCommand(this.root, command, options?.timeout ?? 30_000);
     return { stdout: r.output, stderr: r.timedOut ? 'Tiempo de espera agotado.' : '', exitCode: r.code ?? 1 };
   }

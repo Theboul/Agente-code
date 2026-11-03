@@ -41,7 +41,7 @@ Opciones:
       --no-verify             (work) omitir la verificación automática
       --ship                  (work/ship) entregar sin confirmaciones intermedias (commit, push y PR)
       --draft                 (ship) abrir el PR como borrador
-  -y, --yes                   Aprobar planes, ediciones y comandos sin preguntar
+  -y, --yes                   Aprobar planes y ediciones sin preguntar (los comandos fuera de allowedCommands siguen pidiendo confirmación)
   -h, --help
 
 Dentro del chat: /model <prov/modelo>, /role <rol>, /mcp, /clear, /exit
