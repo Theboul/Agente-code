@@ -6,7 +6,7 @@ import { agentDir, git, gitOk, pushBranch, remoteUrl } from '../git.js';
 import type { Issue } from './issue.js';
 import type { PrCreator } from './pr.js';
 import { loadPrompt } from './prompts.js';
-import { decide, type StageRunner, type WorkflowIO } from './run.js';
+import { type DecisionPrompt, decide, type StageRunner, type WorkflowIO } from './run.js';
 import { updateRun } from './runs.js';
 
 export interface ShipOptions {
@@ -78,7 +78,7 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
     }
   }
 
-  const ask = (q: string) => decide(io, q, o.auto);
+  const ask = (q: string, prompt: DecisionPrompt) => decide(io, q, o.auto, prompt);
   const verifyText = o.verified === undefined ? 'no registrada' : o.verified ? 'lint/typecheck/tests correctos' : 'con fallos pendientes';
   const ctx = {
     'issue.key': issue.key ?? '',
@@ -134,7 +134,13 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
           .map((l) => `  │ ${l}`)
           .join('\n')}`,
       );
-      const reply = await ask('\n¿Confirmar con este mensaje?  [a]probar · [x] cancelar · o escribe cómo cambiarlo: ');
+      const reply = await ask('\n¿Confirmar con este mensaje?  [a]probar · [x] cancelar · o escribe cómo cambiarlo: ', {
+        title: 'Commit',
+        detail: message.split('\n'),
+        approve: 'Sí, confirmar con este mensaje',
+        cancel: 'No, cancelar',
+        feedback: 'Pedir otro mensaje',
+      });
       if (reply.kind === 'approve') break;
       if (reply.kind === 'cancel') {
         io.say('Cancelado. Los cambios quedan en el área de preparación (git reset para deshacer).');
@@ -163,7 +169,12 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
 
   // ── 2. PUSH ─────────────────────────────────────────────────────────────────
   io.say('\n━━ Entrega 2/4 · Push ━━');
-  const go = await ask(`\n¿Subir la rama ${branch} a ${wf.remote}?  [a]sí · [x] parar aquí: `);
+  const go = await ask(`\n¿Subir la rama ${branch} a ${wf.remote}?  [a]sí · [x] parar aquí: `, {
+    title: 'Push',
+    detail: [`${branch} → ${wf.remote}`],
+    approve: `Sí, subir la rama a ${wf.remote}`,
+    cancel: 'No, parar aquí (queda el commit local)',
+  });
   if (go.kind !== 'approve') {
     io.say(`Quedó el commit local. Súbelo después con: agente ship (o git push -u ${wf.remote} ${branch})`);
     await record(o, result);
@@ -197,7 +208,12 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
   // Con clave de tracker: "PROJ-1: título". Sin clave (texto libre) el título de la tarea puede ser un párrafo: se usa el asunto del commit.
   const title = issue.key ? prTitle(issue) : await gitOk(workdir, ['log', '-1', '--format=%s']);
   io.say(`\nTítulo: ${title}\n\n${body}`);
-  const prGo = await ask(`\n¿Abrir el PR contra ${base}?  [a]sí · [x] omitir: `);
+  const prGo = await ask(`\n¿Abrir el PR contra ${base}?  [a]sí · [x] omitir: `, {
+    title: 'Pull request',
+    detail: [title],
+    approve: `Sí, abrir el PR contra ${base}`,
+    cancel: 'No, omitir (la rama ya está subida)',
+  });
   if (prGo.kind !== 'approve') {
     io.say('PR omitido. La rama ya está subida.');
     await record(o, result);

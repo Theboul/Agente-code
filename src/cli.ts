@@ -4,16 +4,19 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
-import type { ModelMessage } from 'ai';
-import { compactIfNeeded } from './agent/compaction.js';
-import { runTurn } from './agent/loop.js';
-import { buildSystemPrompt } from './agent/system.js';
+import { runChat } from './chat.js';
 import { type Config, loadConfig, modelFor, ROLES, type Role } from './config.js';
 import { currentBranch, repoRoot } from './git.js';
 import { connectMcpServers, type McpConnections } from './mcp/client.js';
 import type { Permissions } from './permissions.js';
-import { missingKeyHint, resolveModel } from './providers.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
+import { modelTurn } from './turn.js';
+import { c, termWidth } from './ui/ansi.js';
+import { box } from './ui/box.js';
+import { createDecisionPrompter, createPermissionPrompter } from './ui/dialog.js';
+import { Interrupt } from './ui/interrupt.js';
+import { Ui } from './ui/render.js';
+import { selectIndex, stdinKeys } from './ui/select.js';
 import { classifyRef, extractJson, type Issue, IssueListSchema, IssueSchema, issueFromFile, issueFromText } from './workflow/issue.js';
 import { makePrCreator } from './workflow/pr.js';
 import { DEFAULT_PROMPTS, loadPrompt } from './workflow/prompts.js';
@@ -47,11 +50,7 @@ Opciones:
 Dentro del chat: /model <prov/modelo>, /role <rol>, /mcp, /clear, /exit
 Configuración: agente.config.json (ver README).`;
 
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const short = (v: unknown, n = 160) => {
-  const s = typeof v === 'string' ? v : JSON.stringify(v);
-  return s.length > n ? s.slice(0, n) + '…' : s;
-};
+const dim = c.dim;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -84,7 +83,16 @@ async function main() {
   const config = await loadConfig(cwd);
   const root = (await repoRoot(cwd)) ?? cwd;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  rl.on('SIGINT', () => {});
+  const ui = new Ui();
+  const interrupt = new Interrupt();
+  // Ctrl+C: interrumpe el turno en curso; en reposo pide repetirlo para salir.
+  let lastSigint = 0;
+  rl.on('SIGINT', () => {
+    if (interrupt.fire()) return;
+    if (Date.now() - lastSigint < 2000 && interrupt.quit()) return;
+    lastSigint = Date.now();
+    ui.notice('Pulsa Ctrl+C otra vez para salir (o escribe /exit).');
+  });
 
   const perms: Permissions = {
     autoApprove: values.yes ?? false,
@@ -95,18 +103,43 @@ async function main() {
       return /^(s|si|sí|y|yes)$/i.test(a.trim());
     },
   };
+  perms.prompt = createPermissionPrompter({
+    keys: stdinKeys(),
+    out: process.stdout,
+    ask: (q) => rl.question(q),
+    interactive: () => Boolean(process.stdin.isTTY),
+    onOpen: () => ui.idle(),
+  });
   perms.ask = async (q) => {
     if (!process.stdin.isTTY) return undefined;
     return rl.question(`\n❓ ${q}\n› `);
   };
   const mcp = await connectMcpServers(config.mcpServers, perms);
-  for (const s of mcp.status) if (!s.ok) console.log(`⚠ MCP ${s.name}: ${s.error}`);
+  for (const s of mcp.status) if (!s.ok) ui.warn(`MCP ${s.name}: ${s.error}`);
 
+  const ctx: Ctx = { cwd, root, config, perms, mcp, rl, ui, interrupt };
   try {
-    if (cmd === 'chat') await chat({ cwd, config, perms, mcp, rl });
-    else if (cmd === 'work') await work({ cwd, root, config, perms, mcp, rl });
-    else if (cmd === 'ship') await shipCmd({ cwd, root, config, perms, mcp, rl });
-    else await issues({ cwd, root, config, perms, mcp, rl });
+    if (cmd === 'chat') {
+      await runChat({
+        cwd,
+        config,
+        perms,
+        mcp,
+        rl,
+        ui,
+        interrupt,
+        model: values.model,
+        role: values.role as Role | undefined,
+        prompt: values.prompt,
+        handlers: {
+          work: async (ref) => startWork(ctx, await resolveIssue(ctx, ref)),
+          issues: () => issues(ctx),
+          ship: (branch) => shipBranch(ctx, branch),
+        },
+      });
+    } else if (cmd === 'work') await work(ctx);
+    else if (cmd === 'ship') await shipBranch(ctx, positionals[1]);
+    else await issues(ctx);
   } finally {
     rl.close();
     await mcp.close();
@@ -120,21 +153,16 @@ interface Ctx {
   perms: Permissions;
   mcp: McpConnections;
   rl: ReturnType<typeof createInterface>;
+  ui: Ui;
+  interrupt: Interrupt;
 }
 
-const MARK: Record<string, string> = { completed: '✔', in_progress: '▶', cancelled: '✖', pending: '○' };
-const showTodos = (todos: { content: string; status: string }[]) =>
-  console.log(dim(`\n☰ Tareas\n${todos.map((t) => `  ${MARK[t.status] ?? '○'} ${t.content}`).join('\n')}`));
-
-/** Un turno del agente con salida en vivo y Ctrl+C para interrumpir. */
-function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
+/** Un turno del agente para el flujo (plan, implementación, redacción…), con la salida visual de la sesión. */
+function makeStageRunner(ctx: Ctx): StageRunner {
+  const { config, perms, mcp, ui } = ctx;
   return async ({ role, system, tools, workdir, messages }) => {
     const modelId = values.model ?? modelFor(config, role);
-    const hint = missingKeyHint(modelId, config);
-    if (hint) throw new Error(`Falta la variable de entorno ${hint} para usar ${modelId}.`);
-    console.log(dim(`\n[${role} · ${modelId}]`));
-    // Sin herramientas = redacción de commit/PR: se muestra ya sanitizado por el flujo, no el texto crudo.
-    const stream = tools !== 'none';
+    ui.notice(`\n✻ ${role} · ${modelId}`);
     const toolset =
       tools === 'none'
         ? {}
@@ -142,39 +170,9 @@ function makeStageRunner({ config, perms, mcp }: Ctx): StageRunner {
           ? readOnlyTools(workdir, perms)
           : tools === 'mcp'
             ? mcp.tools
-            : { ...mcp.tools, ...nativeTools(workdir, perms, { onTodos: showTodos }) };
-    const ac = new AbortController();
-    const onSigint = () => ac.abort();
-    process.once('SIGINT', onSigint);
-    try {
-      const model = resolveModel(modelId, config);
-      const removed = await compactIfNeeded(messages, { model, contextWindow: config.contextWindow, ratio: config.compactAt, signal: ac.signal });
-      if (removed) console.log(dim(`⇣ Contexto compactado (${removed} mensajes resumidos)`));
-      const r = await runTurn({
-        model,
-        system,
-        tools: toolset,
-        messages,
-        maxSteps: config.maxSteps,
-        idleTimeoutMs: config.requestTimeoutSeconds * 1000,
-        onRetry: (n, e, ms) =>
-          console.log(
-            dim(
-              `\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`,
-            ),
-          ),
-        abortSignal: ac.signal,
-        onText: (d) => stream && process.stdout.write(d),
-        onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
-        onToolResult: (n, o) => console.log(dim(`  ↳ ${n}: ${short(o, 200)}`)),
-      });
-      if (stream) console.log();
-      return { text: r.text, newMessages: r.newMessages };
-    } catch (e) {
-      throw ac.signal.aborted ? new Error('Interrumpido por el usuario.') : new Error(`Falló el modelo ${modelId}: ${e instanceof Error ? e.message : e}`);
-    } finally {
-      process.off('SIGINT', onSigint);
-    }
+            : { ...mcp.tools, ...nativeTools(workdir, perms, { onTodos: (t) => ui.todos(t) }) };
+    // Sin herramientas = redacción de commit/PR: se muestra ya limpia por el flujo, no el texto crudo del modelo.
+    return modelTurn(ctx, { modelId, system, tools: toolset, messages, stream: tools !== 'none' });
   };
 }
 
@@ -205,7 +203,15 @@ async function resolveIssue(ctx: Ctx, ref: string): Promise<Issue> {
 }
 
 function workflowIO(ctx: Ctx) {
+  const choose = createDecisionPrompter({
+    keys: stdinKeys(),
+    out: process.stdout,
+    ask: (q) => ctx.rl.question(q),
+    interactive: () => Boolean(process.stdin.isTTY),
+    onOpen: () => ctx.ui.idle(),
+  });
   return {
+    choose,
     say: (m: string) => console.log(m),
     ask: async (q: string) => {
       if (!process.stdin.isTTY) throw new Error('Se necesita una terminal interactiva para aprobar (o usa --yes / --ship).');
@@ -230,8 +236,17 @@ async function startWork(ctx: Ctx, issue: Issue) {
     process.exitCode = result.status === 'failed' ? 1 : 0;
     return;
   }
-  const yes = /^(s|si|sí|y|yes)$/i;
-  const now = values.ship || (process.stdin.isTTY && yes.test((await ctx.rl.question('\n¿Hacer commit, push y abrir el PR ahora? [s/N] ')).trim()));
+  const now =
+    values.ship ||
+    (process.stdin.isTTY &&
+      (
+        await workflowIO(ctx).choose({
+          title: 'Entrega',
+          detail: [`Rama ${result.branch}`],
+          approve: 'Sí, hacer commit, push y abrir el PR',
+          cancel: 'No, lo entrego después (agente ship)',
+        })
+      ).kind === 'approve');
   if (now) await deliver(ctx, result as Required<Pick<typeof result, 'branch' | 'workdir' | 'base' | 'issue' | 'plan'>> & typeof result);
   else console.log(`Cuando quieras entregarlo: agente ship ${result.branch}`);
 }
@@ -258,10 +273,10 @@ async function deliver(ctx: Ctx, r: { branch: string; workdir: string; base: str
   if (!res.pushed) process.exitCode = 1;
 }
 
-async function shipCmd(ctx: Ctx) {
+async function shipBranch(ctx: Ctx, branchArg?: string) {
   const root = ctx.root;
   if (!root) throw new Error('Este directorio no es un repositorio git.');
-  const branch = positionals[1] ?? (await currentBranch(root));
+  const branch = branchArg ?? (await currentBranch(root));
   const found = await findRun(root, branch);
   if (!found) throw new Error(`No hay una ejecución de \`agente work\` registrada para la rama "${branch}".`);
   const { rec, file } = found;
@@ -280,97 +295,23 @@ async function issues(ctx: Ctx) {
   const json = await askTracker(ctx, await loadPrompt(root, 'issue-list', { query: ctx.config.workflow.issueQuery }));
   const list = IssueListSchema.parse(json);
   if (!list.length) return console.log('No hay issues que coincidan.');
-  for (const [n, i] of list.entries()) console.log(`${String(n + 1).padStart(2)}. ${i.key ?? '-'}  ${i.title}`);
-  const pick = Number((await ctx.rl.question('\nNúmero de la issue (Enter para salir): ')).trim());
-  const chosen = list[pick - 1];
+  const choice = await selectIndex({
+    count: list.length,
+    keys: stdinKeys(),
+    out: process.stdout,
+    clear: true,
+    render: (sel) => [
+      ...box(
+        list.map((i, n) => ({ text: `${n === sel ? '❯' : ' '} ${n + 1}. ${i.key ?? '-'}  ${i.title}`, paint: n === sel ? c.cyan : (t: string) => t })),
+        { title: 'Issues disponibles', width: termWidth(), border: c.cyan },
+      ),
+      c.dim('  ↑↓ elegir · Enter trabajar en ella · Esc salir'),
+    ],
+  });
+  if (choice === 'cancel') return;
+  const chosen = list[choice];
   if (!chosen) return;
   await startWork(ctx, await resolveIssue(ctx, chosen.key ?? chosen.title));
-}
-
-async function chat(ctx: Ctx) {
-  const { cwd, config, perms, mcp, rl } = ctx;
-  let modelId = values.model ?? modelFor(config, (values.role as Role | undefined) ?? 'implement');
-  const system = await buildSystemPrompt(cwd);
-  const tools = { ...mcp.tools, ...nativeTools(cwd, perms, { onTodos: showTodos }) };
-  let history: ModelMessage[] = [];
-
-  const turn = async (input: string) => {
-    const hint = missingKeyHint(modelId, config);
-    if (hint) throw new Error(`Falta la variable de entorno ${hint} para usar ${modelId}.`);
-    history.push({ role: 'user', content: input });
-    const ac = new AbortController();
-    const onSigint = () => ac.abort();
-    process.once('SIGINT', onSigint);
-    try {
-      const model = resolveModel(modelId, config);
-      const removed = await compactIfNeeded(history, { model, contextWindow: config.contextWindow, ratio: config.compactAt, signal: ac.signal });
-      if (removed) console.log(dim(`⇣ Contexto compactado (${removed} mensajes resumidos)`));
-      const { newMessages } = await runTurn({
-        model,
-        system,
-        tools,
-        messages: history,
-        maxSteps: config.maxSteps,
-        idleTimeoutMs: config.requestTimeoutSeconds * 1000,
-        onRetry: (n, e, ms) =>
-          console.log(
-            dim(
-              `\n⟳ ${modelId}: fallo temporal o límite de uso. Reintento ${n} en ${Math.round(ms / 1000)}s… (${short(e instanceof Error ? e.message : e, 110)})`,
-            ),
-          ),
-        abortSignal: ac.signal,
-        onText: (d) => process.stdout.write(d),
-        onToolCall: (n, i) => console.log(dim(`\n⚙ ${n} ${short(i)}`)),
-        onToolResult: (n, o) => console.log(dim(`  ↳ ${n}: ${short(o, 200)}`)),
-      });
-      history.push(...newMessages);
-      console.log();
-    } catch (e) {
-      history.pop();
-      if (ac.signal.aborted) console.log(dim('\n(interrumpido)'));
-      else console.error(`\nError con ${modelId}: ${e instanceof Error ? e.message : e}`);
-    } finally {
-      process.off('SIGINT', onSigint);
-    }
-  };
-
-  if (values.prompt !== undefined) return turn(values.prompt);
-
-  const printMcp = () => {
-    if (!mcp.status.length) return console.log(dim('Sin servidores MCP configurados (mcpServers en agente.config.json).'));
-    for (const s of mcp.status) {
-      console.log(s.ok ? `  ✓ ${s.name}: ${s.tools.length} herramientas` : `  ✗ ${s.name}: ${s.error}`);
-      if (s.ok) for (const t of s.tools) console.log(dim(`      ${t}`));
-    }
-  };
-
-  console.log(`agente · ${modelId} · ${cwd}\n${dim('/model, /role, /mcp, /clear, /exit')}`);
-  if (mcp.status.some((s) => s.ok)) console.log(dim(`MCP: ${Object.keys(mcp.tools).length} herramientas (/mcp para ver)`));
-  for (;;) {
-    let line: string;
-    try {
-      line = (await rl.question('\n› ')).trim();
-    } catch {
-      break; // stdin cerrado
-    }
-    if (!line) continue;
-    if (line === '/exit' || line === '/salir') break;
-    if (line === '/clear') {
-      history = [];
-      console.log(dim('Historial limpiado.'));
-    } else if (line === '/mcp') printMcp();
-    else if (line.startsWith('/model ')) {
-      modelId = line.slice(7).trim();
-      console.log(dim(`Modelo: ${modelId}`));
-    } else if (line.startsWith('/role ')) {
-      const r = line.slice(6).trim() as Role;
-      if (!ROLES.includes(r)) console.log(`Rol inválido. Opciones: ${ROLES.join(', ')}`);
-      else {
-        modelId = modelFor(config, r);
-        console.log(dim(`Modelo (${r}): ${modelId}`));
-      }
-    } else await turn(line);
-  }
 }
 
 /** Crea la config y los prompts editables sin pisar nada existente. */

@@ -69,6 +69,31 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 - **Piden confirmación por defecto.** Usa `autoApprove` con una lista de herramientas (p. ej. solo las de lectura) o `true` para todas.
 - Si un servidor falla al conectar, se avisa y el resto sigue funcionando. `/mcp` muestra el estado y las herramientas.
 
+## Sesión interactiva
+
+`agente` (sin argumentos) abre una sesión al estilo Claude Code en el proyecto actual: puedes **preguntarle cosas del código**, pedirle **cambios puntuales** o lanzar **el flujo completo** de una issue, todo en la misma conversación.
+
+```
+● Leer(src/math.js)
+  ⎿  Leídas 4 líneas
+● Editar(src/math.js)
+╭─ Editar archivo ────────────────────────────────────────────╮
+│ src/math.js                                                  │
+│ - return a + b;                                              │
+│ + return Number(a) + Number(b);                              │
+│ ¿Quieres aplicar este cambio?                                │
+│ ❯ 1. Sí                                                      │
+│   2. Sí, no volver a preguntar por las ediciones en esta sesión │
+│   3. No, y decirle al agente qué hacer distinto              │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+- **Permisos con opciones:** cada edición, borrado, comando, herramienta MCP o lectura web muestra qué va a hacer, con vista previa del cambio. Elige con ↑↓ y Enter, o pulsa el número. La opción 2 recuerda el permiso **solo durante la sesión** (todas las ediciones, un comando concreto, una herramienta MCP o un dominio); los comandos encadenados, que salen del proyecto o tocan secretos nunca la ofrecen. La opción 3 rechaza y le dice al agente qué hacer distinto: él recibe tu indicación.
+- **Comandos:** `/work <issue>`, `/issues` (eliges con flechas), `/ship [rama]`, `/model`, `/role`, `/mcp`, `/status`, `/clear`, `/help`, `/exit`.
+- **En lenguaje natural:** si le pides resolver una issue completa, el agente puede iniciar el flujo por su cuenta (te lo pregunta antes).
+- **Teclas:** `Esc` o `Ctrl+C` interrumpen al modelo; `Ctrl+C` dos veces en reposo sale. Las decisiones del flujo (aprobar el plan, aceptar el diff, commit, push, PR) usan el mismo selector.
+- Sin terminal interactiva (pipes, CI) los diálogos rechazan por seguridad; usa `--yes` o `--ship`. Los colores se desactivan con `NO_COLOR`.
+
 ## Flujo `agente work`
 
 Es el mismo flujo que usan los demás arneses de código:

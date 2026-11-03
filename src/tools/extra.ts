@@ -1,6 +1,6 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { authorize, type Permissions } from '../permissions.js';
+import { authorizeDetailed, denialMessage, type Permissions } from '../permissions.js';
 
 /** Pregunta abierta al usuario cuando la tarea es ambigua. Sin terminal, el modelo debe decidir y documentar. */
 export function askUserTool(perms: Permissions) {
@@ -70,7 +70,14 @@ export function webFetchTool(perms: Permissions, fetchImpl: typeof fetch = fetch
       if (!/^https?:$/.test(u.protocol)) return { error: 'Solo se permiten URLs http/https.' };
       if (isBlockedHost(u.hostname)) return { error: 'Destino local o de red privada bloqueado.' };
       if (!allowedHosts.has(u.hostname)) {
-        if (!(await authorize(perms, 'ask', `¿Permitir que el agente lea ${u.origin}?`))) return { error: 'DENEGADO por el usuario.' };
+        const reply = await authorizeDetailed(perms, 'ask', {
+          kind: 'web',
+          title: 'Leer página web',
+          target: url,
+          question: `¿Permitir que el agente lea ${u.origin}?`,
+          session: { key: `web:${u.hostname}`, label: `las lecturas de ${u.hostname}` },
+        });
+        if (!reply.allow) return { error: denialMessage(reply) };
         allowedHosts.add(u.hostname);
       }
       try {

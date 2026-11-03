@@ -21,8 +21,21 @@ export type StageRunner = (a: {
   messages: ModelMessage[];
 }) => Promise<{ text: string; newMessages: ModelMessage[] }>;
 
+/** Decisión que se le plantea al usuario en el flujo (aprobar el plan, aceptar el diff, confirmar el push…). */
+export interface DecisionPrompt {
+  title: string;
+  /** Detalle opcional mostrado sobre las opciones (p. ej. el mensaje de commit propuesto). */
+  detail?: string[];
+  approve: string;
+  cancel: string;
+  /** Si existe, se ofrece "pedir cambios" y se lee el texto libre. */
+  feedback?: string;
+}
+
 export interface WorkflowIO {
   ask(question: string): Promise<string>;
+  /** Diálogo con opciones. Si falta, se usa `ask` con respuestas de texto (a / x / texto libre). */
+  choose?(prompt: DecisionPrompt): Promise<Reply>;
   say(message: string): void;
 }
 
@@ -60,8 +73,9 @@ const MAX_DIFF_LINES = 400;
 
 export type Reply = { kind: 'approve' } | { kind: 'cancel' } | { kind: 'feedback'; text: string };
 
-export async function decide(io: WorkflowIO, question: string, yes?: boolean): Promise<Reply> {
+export async function decide(io: WorkflowIO, question: string, yes?: boolean, prompt?: DecisionPrompt): Promise<Reply> {
   if (yes) return { kind: 'approve' };
+  if (io.choose && prompt) return io.choose(prompt);
   const a = (await io.ask(question)).trim();
   if (APPROVE.test(a)) return { kind: 'approve' };
   if (!a || CANCEL.test(a)) return { kind: 'cancel' };
@@ -95,7 +109,12 @@ export async function runWorkflow(o: WorkflowOptions): Promise<WorkflowResult> {
     const r = await o.runStage({ role: 'plan', system, tools: 'readonly', workdir: root, messages: planMessages });
     plan = r.text.trim();
     planMessages.push(...r.newMessages);
-    const reply = await decide(io, '\n¿Aprobar el plan?  [a]probar · [x] cancelar · o escribe qué cambiar: ', o.yes);
+    const reply = await decide(io, '\n¿Aprobar el plan?  [a]probar · [x] cancelar · o escribe qué cambiar: ', o.yes, {
+      title: 'Plan',
+      approve: 'Sí, aprobar el plan y crear la rama',
+      cancel: 'No, cancelar (no se crea nada)',
+      feedback: 'Pedir cambios al plan',
+    });
     if (reply.kind === 'approve') break;
     if (reply.kind === 'cancel') {
       io.say('Cancelado. No se creó ninguna rama.');
@@ -158,7 +177,11 @@ export async function runWorkflow(o: WorkflowOptions): Promise<WorkflowResult> {
   await step();
   let verified = await verifyLoop();
   if (!verified) {
-    const go = await decide(io, '\nLa verificación sigue fallando. ¿Pasar a la revisión de todos modos?  [a]sí · [x] cancelar: ', o.yes);
+    const go = await decide(io, '\nLa verificación sigue fallando. ¿Pasar a la revisión de todos modos?  [a]sí · [x] cancelar: ', o.yes, {
+      title: 'La verificación sigue fallando',
+      approve: 'Sí, pasar a la revisión de todos modos',
+      cancel: 'No, detenerme aquí',
+    });
     if (go.kind !== 'approve') {
       io.say(`Detenido. El trabajo queda en la rama ${branch}${useWorktree ? ` (${workdir})` : ''}.`);
       return await finish('failed');
@@ -176,7 +199,12 @@ export async function runWorkflow(o: WorkflowOptions): Promise<WorkflowResult> {
       io.say(lines.slice(0, MAX_DIFF_LINES).join('\n'));
       if (lines.length > MAX_DIFF_LINES) io.say(`…[${lines.length - MAX_DIFF_LINES} líneas más; usa \`git diff\` en ${workdir}]`);
     }
-    const reply = await decide(io, '\n¿Aceptar los cambios?  [a]ceptar · [x] descartar · o escribe qué cambiar: ', o.yes);
+    const reply = await decide(io, '\n¿Aceptar los cambios?  [a]ceptar · [x] descartar · o escribe qué cambiar: ', o.yes, {
+      title: 'Revisión de cambios',
+      approve: 'Sí, aceptar los cambios',
+      cancel: 'No, descartarlos',
+      feedback: 'Pedir cambios',
+    });
     if (reply.kind === 'approve') break;
     if (reply.kind === 'cancel') {
       const cleanup = useWorktree

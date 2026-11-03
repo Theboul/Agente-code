@@ -24,4 +24,5 @@ Arnés de código en consola (TypeScript, Node >= 20, ESM). Se usa a sí mismo c
 - `src/agent/`: turno del modelo, reintentos, compactación de contexto.
 - `src/workflow/`: plan, rama, verificación, revisión, commit, push, PR y tracker.
 - `src/tools/`: herramientas con seguridad. `src/mcp/`: clientes MCP.
+- `src/ui/`: presentación de la sesión (colores, cuadros, selector con teclado, diálogos de permiso). `src/chat.ts`: sesión interactiva; `src/turn.ts`: un turno del modelo con salida visual.
 - `test/`: un archivo por área; el modelo y el tracker se simulan, sin red.

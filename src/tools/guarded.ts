@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { type FsProvider, NodeFsProvider, type ShellProvider, type ShellResult } from '@openharness/core';
-import { authorize, classifyCommand, type Permissions } from '../permissions.js';
+import { authorizeDetailed, classifyCommand, commandSessionKey, denialMessage, type Permissions } from '../permissions.js';
 import { execCommand } from './bash.js';
 
 /** Resuelve una ruta y garantiza que queda dentro del directorio del proyecto. */
@@ -35,8 +35,6 @@ export function previewChange(oldText: string | undefined, newText: string): str
   return out.length ? `desde la línea ${start + 1}:\n${out.join('\n')}` : 'sin cambios';
 }
 
-const DENIED = 'DENEGADO por el usuario.';
-
 /**
  * Sistema de archivos del proyecto: nada fuera del directorio, y toda escritura, borrado o
  * renombrado pide confirmación (con vista previa del cambio).
@@ -60,17 +58,33 @@ export class GuardedFsProvider extends NodeFsProvider implements FsProvider {
   override async writeFile(p: string, content: string): Promise<void> {
     const old = (await this.exists(p)) ? await super.readFile(p) : undefined;
     if (old === content) return;
-    if (!(await authorize(this.perms, 'ask', `¿Escribir ${this.rel(p)}?  ${previewChange(old, content)}`))) throw new Error(DENIED);
+    const reply = await authorizeDetailed(this.perms, 'ask', {
+      kind: old === undefined ? 'create' : 'edit',
+      title: old === undefined ? 'Crear archivo' : 'Editar archivo',
+      target: this.rel(p),
+      preview: previewChange(old, content).split('\n'),
+      question: `¿Escribir ${this.rel(p)}?  ${previewChange(old, content)}`,
+      session: { key: 'edits', label: 'las ediciones' },
+    });
+    if (!reply.allow) throw new Error(denialMessage(reply));
     await super.writeFile(p, content);
   }
 
   override async remove(p: string, options?: { recursive?: boolean }): Promise<void> {
-    if (!(await authorize(this.perms, 'ask', `¿BORRAR ${this.rel(p)}${options?.recursive ? ' (recursivo)' : ''}?`))) throw new Error(DENIED);
+    const question = `¿BORRAR ${this.rel(p)}${options?.recursive ? ' (recursivo)' : ''}?`;
+    const reply = await authorizeDetailed(this.perms, 'ask', { kind: 'delete', title: 'Borrar', target: this.rel(p), question });
+    if (!reply.allow) throw new Error(denialMessage(reply));
     await super.remove(p, options);
   }
 
   override async rename(from: string, to: string): Promise<void> {
-    if (!(await authorize(this.perms, 'ask', `¿Mover ${this.rel(from)} → ${this.rel(to)}?`))) throw new Error(DENIED);
+    const reply = await authorizeDetailed(this.perms, 'ask', {
+      kind: 'move',
+      title: 'Mover',
+      target: `${this.rel(from)} → ${this.rel(to)}`,
+      question: `¿Mover ${this.rel(from)} → ${this.rel(to)}?`,
+    });
+    if (!reply.allow) throw new Error(denialMessage(reply));
     await super.rename(from, to);
   }
 }
@@ -85,7 +99,14 @@ export class GuardedShellProvider implements ShellProvider {
   async exec(command: string, options?: { timeout?: number }): Promise<ShellResult> {
     const decision = classifyCommand(command, this.perms.allowedCommands);
     if (decision === 'deny') return { stdout: '', stderr: 'DENEGADO: comando bloqueado por la política de seguridad.', exitCode: 126 };
-    if (!(await authorize(this.perms, decision, `¿Ejecutar?  $ ${command}`))) return { stdout: '', stderr: DENIED, exitCode: 126 };
+    const reply = await authorizeDetailed(this.perms, decision, {
+      kind: 'command',
+      title: 'Ejecutar comando',
+      target: `$ ${command}`,
+      question: `¿Ejecutar?  $ ${command}`,
+      session: commandSessionKey(command),
+    });
+    if (!reply.allow) return { stdout: '', stderr: denialMessage(reply), exitCode: 126 };
     const r = await execCommand(this.root, command, options?.timeout ?? 30_000);
     return { stdout: r.output, stderr: r.timedOut ? 'Tiempo de espera agotado.' : '', exitCode: r.code ?? 1 };
   }

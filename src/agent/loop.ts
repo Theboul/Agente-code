@@ -81,7 +81,7 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
           opts.onToolResult?.(part.toolName, part.output);
           break;
         case 'tool-error':
-          opts.onToolResult?.(part.toolName, `Error: ${String(part.error)}`);
+          opts.onToolResult?.(part.toolName, `Error: ${part.error instanceof Error ? part.error.message : String(part.error)}`);
           break;
         case 'error':
           throw part.error instanceof Error ? part.error : new Error(String(part.error));

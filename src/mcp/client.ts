@@ -2,7 +2,7 @@ import { createMCPClient, type MCPClient } from '@ai-sdk/mcp';
 import { Experimental_StdioMCPTransport as StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 import type { ToolSet } from 'ai';
 import type { McpServerConfig } from '../config.js';
-import { authorize, type Permissions } from '../permissions.js';
+import { authorizeDetailed, denialMessage, type Permissions } from '../permissions.js';
 
 export interface McpServerStatus {
   name: string;
@@ -61,8 +61,16 @@ async function connectOne(name: string, cfg: McpServerConfig, perms: Permissions
         ...t,
         execute: async (input: never, options: never) => {
           if (needsApproval(cfg, original)) {
-            const q = `¿Ejecutar herramienta MCP ${name}/${original}?\n  ${JSON.stringify(input).slice(0, 400)}`;
-            if (!(await authorize(perms, 'ask', q))) return 'DENEGADO por el usuario.';
+            const args = JSON.stringify(input, null, 2).split('\n');
+            const reply = await authorizeDetailed(perms, 'ask', {
+              kind: 'mcp',
+              title: 'Herramienta MCP',
+              target: `${name}/${original}`,
+              preview: args.slice(0, 12),
+              question: `¿Ejecutar herramienta MCP ${name}/${original}?\n  ${JSON.stringify(input).slice(0, 400)}`,
+              session: { key: `mcp:${name}/${original}`, label: `la herramienta ${name}/${original}` },
+            });
+            if (!reply.allow) return denialMessage(reply);
           }
           return exec(input, options);
         },
