@@ -11,7 +11,7 @@ import { PRESETS } from './connect/presets.js';
 import { applyCredentials } from './credentials.js';
 import { currentBranch, git, repoRoot } from './git.js';
 import { parseInvocation } from './invocation.js';
-import { connectMcpServers, type McpConnections } from './mcp/client.js';
+import { connectMcpServers, type McpConnections, toolsOfServer } from './mcp/client.js';
 import { MODES, type Permissions } from './permissions.js';
 import { missingKeyHint, PROVIDER_HELP } from './providers.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
@@ -247,7 +247,7 @@ interface Ctx {
 /** Un turno del agente para el flujo (plan, implementación, redacción…), con la salida visual de la sesión. */
 function makeStageRunner(ctx: Ctx): StageRunner {
   const { config, perms, mcp, ui } = ctx;
-  return async ({ role, system, tools, workdir, messages, quiet }) => {
+  return async ({ role, system, tools, workdir, messages, quiet, server }) => {
     const modelId = values.model ?? modelFor(config, role);
     ui.notice(`\n✻ ${role} · ${modelId}`);
     const toolset =
@@ -256,8 +256,8 @@ function makeStageRunner(ctx: Ctx): StageRunner {
         : tools === 'readonly'
           ? readOnlyTools(workdir, perms)
           : tools === 'mcp'
-            ? mcp.tools
-            : { ...mcp.tools, ...nativeTools(workdir, perms, { onTodos: (t) => ui.todos(t) }) };
+            ? toolsOfServer(mcp.tools, server)
+            : { ...toolsOfServer(mcp.tools, server), ...nativeTools(workdir, perms, { onTodos: (t) => ui.todos(t) }) };
     // Sin herramientas = redacción de commit/PR: se muestra ya limpia por el flujo, no el texto crudo del modelo.
     return modelTurn(ctx, { modelId, system, tools: toolset, messages, stream: tools !== 'none' && !quiet });
   };
@@ -268,9 +268,14 @@ async function askTracker(ctx: Ctx, prompt: string): Promise<unknown> {
   if (!Object.keys(ctx.mcp.tools).length) {
     throw new Error('No hay un tracker conectado. Conéctalo con /connect jira|trello|github (o `agente connect jira`), o pasa un archivo .md / texto libre.');
   }
+  const server = ctx.config.workflow.tracker;
+  if (server && !Object.keys(toolsOfServer(ctx.mcp.tools, server)).length) {
+    throw new Error(`El tracker "${server}" (workflow.tracker) no está conectado o no expone herramientas. Mira /mcp o revisa mcpServers e includeTools.`);
+  }
   const run = makeStageRunner(ctx);
   return askJson(async () => {
     const r = await run({
+      server,
       role: 'light',
       system: 'Eres un asistente que consulta un gestor de tareas mediante herramientas MCP. Responde siempre en el formato pedido.',
       tools: 'full',

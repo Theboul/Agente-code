@@ -21,6 +21,8 @@ export type StageRunner = (a: {
   messages: ModelMessage[];
   /** Consulta interna (p. ej. al tracker): no se muestra el texto del modelo, solo las herramientas. */
   quiet?: boolean;
+  /** Limita las herramientas MCP a las de este servidor (p. ej. el tracker). Sin definir: todas. */
+  server?: string;
 }) => Promise<{ text: string; newMessages: ModelMessage[] }>;
 
 /** Decisión que se le plantea al usuario en el flujo (aprobar el plan, aceptar el diff, confirmar el push…). */

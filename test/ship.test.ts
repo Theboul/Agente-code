@@ -281,6 +281,24 @@ describe('base del PR', () => {
     sh(dir, 'remote', 'set-url', 'origin', '/no/existe/repo.git');
     expect(await resolvePrBase(dir, 'origin', 'add-changelog')).toEqual({ base: 'add-changelog' });
   });
+  it('workflow.tracker limita la sincronización a las herramientas de ese servidor', async () => {
+    const run = async (tracker?: string) => {
+      const { dir } = setup();
+      const config = await loadConfig(dir);
+      const servers: (string | undefined)[] = [];
+      const stage = fakeStage();
+      await ship({
+        ...base(dir),
+        config: { ...config, workflow: { ...config.workflow, tracker } },
+        io: scripted().io,
+        runStage: async (a) => (a.tools === 'mcp' && servers.push(a.server), stage(a)),
+        createPr: async () => ({ method: 'gh', url: 'https://github.com/o/r/pull/7' }),
+      });
+      return servers;
+    };
+    expect(await run('jira')).toEqual(['jira']);
+    expect(await run()).toEqual([undefined]); // sin configurar, igual que antes: todas las herramientas
+  });
   it('ship abre el PR contra la rama válida y avisa del cambio', async () => {
     const { dir } = setup();
     sh(dir, 'branch', 'add-changelog', 'main');

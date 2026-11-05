@@ -148,7 +148,7 @@ La issue puede ser `PROJ-123`, `#45` o una URL (la lee el modelo vía MCP), un a
 ### Personalizar
 
 - `agente init` crea `agente.config.json` y copia los prompts de cada etapa a `.agente/prompts/*.md` (`plan`, `implement`, `fix`, `issue-fetch`, `issue-list`). Edítalos y versiónalos con el repo; variables: `{{issue.key}}`, `{{issue.title}}`, `{{issue.body}}`, `{{plan}}`, `{{branch}}`, `{{verify.command}}`, `{{verify.output}}`.
-- `workflow` en la config: `branchPrefix`, `isolation`, `worktreeDir`, `setup`, `verify` (tus propios comandos; `[]` desactiva), `maxFixAttempts`, `issueQuery`.
+- `workflow` en la config: `branchPrefix`, `isolation`, `worktreeDir`, `setup`, `verify` (tus propios comandos; `[]` desactiva), `maxFixAttempts`, `issueQuery`, `tracker` (nombre del servidor MCP de tus issues, p. ej. `"jira"`: con Jira y GitHub conectados a la vez, `agente issues` y la sincronización solo usan ese servidor; el PR sigue usando el de GitHub).
 - Un modelo distinto por etapa con `roles` (`plan` / `implement` / `light`).
 
 ## Entrega: `agente ship`

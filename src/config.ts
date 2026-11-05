@@ -64,6 +64,8 @@ const WorkflowConfig = z.object({
   sync: z.boolean().default(true),
   /** Estado al que mover la issue tras el PR, p. ej. "In Review". Vacío = solo comentar. */
   syncStatus: z.string().optional(),
+  /** Servidor MCP del tracker de issues (p. ej. "jira"). Con varios servidores conectados (Jira + GitHub), evita que el modelo consulte el equivocado. Sin definir: todos. */
+  tracker: z.string().optional(),
   /** Qué issues listar con `agente issues` (lenguaje natural, se lo pasa al modelo). */
   issueQuery: z.string().default('abiertas, sin asignar o asignadas a mí, las más recientes primero'),
 });

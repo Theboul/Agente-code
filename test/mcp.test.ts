@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { McpServerConfig } from '../src/config.js';
-import { cleanEnv, connectMcpServers, expandEnv, isToolExposed, type McpConnections, needsApproval, toolName } from '../src/mcp/client.js';
+import { cleanEnv, connectMcpServers, expandEnv, isToolExposed, type McpConnections, needsApproval, toolName, toolsOfServer } from '../src/mcp/client.js';
 import type { Permissions } from '../src/permissions.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-mcp.mjs', import.meta.url));
@@ -33,6 +33,13 @@ describe('utilidades MCP', () => {
   it('nombra y limita las herramientas', () => {
     expect(toolName('my server', 'do.it')).toBe('mcp__my_server__do_it');
     expect(toolName('s', 'x'.repeat(100))).toHaveLength(64);
+  });
+  it('separa las herramientas por servidor', () => {
+    const t = { mcp__jira__jira_get: {}, mcp__jira__jira_post: {}, mcp__github__list_issues: {}, mcp__jira2__x: {} } as never;
+    expect(Object.keys(toolsOfServer(t, 'jira')).sort()).toEqual(['mcp__jira__jira_get', 'mcp__jira__jira_post']);
+    expect(Object.keys(toolsOfServer(t, 'github'))).toEqual(['mcp__github__list_issues']);
+    expect(Object.keys(toolsOfServer(t, 'nada'))).toEqual([]);
+    expect(toolsOfServer(t)).toBe(t); // sin servidor: todas
   });
   it('filtra las herramientas expuestas al modelo', () => {
     expect(isToolExposed(base, 'x')).toBe(true); // sin filtros: todas, como siempre

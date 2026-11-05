@@ -33,10 +33,18 @@ export function expandEnv(value: string, env: NodeJS.ProcessEnv = process.env): 
 
 const expandRecord = (r: Record<string, string>, env?: NodeJS.ProcessEnv) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, expandEnv(v, env)]));
 
+const cleanName = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_');
+
 /** Nombre expuesto al modelo: mcp__servidor__herramienta, solo [a-zA-Z0-9_-] y máx. 64 caracteres. */
 export function toolName(server: string, tool: string): string {
-  const clean = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `mcp__${clean(server)}__${clean(tool)}`.slice(0, 64);
+  return `mcp__${cleanName(server)}__${cleanName(tool)}`.slice(0, 64);
+}
+
+/** Solo las herramientas de un servidor. Sin servidor, todas (comportamiento por defecto). */
+export function toolsOfServer(tools: ToolSet, server?: string): ToolSet {
+  if (!server) return tools;
+  const prefix = `mcp__${cleanName(server)}__`;
+  return Object.fromEntries(Object.entries(tools).filter(([name]) => name.startsWith(prefix)));
 }
 
 /** ¿Se expone esta herramienta al modelo? includeTools (si existe) manda; excludeTools quita después. */

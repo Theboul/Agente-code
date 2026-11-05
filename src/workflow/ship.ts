@@ -248,6 +248,7 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
         role: 'light',
         system: 'Actualizas un gestor de tareas con herramientas MCP. Sé breve.',
         tools: 'mcp',
+        server: wf.tracker,
         workdir,
         messages: [
           {
