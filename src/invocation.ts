@@ -13,11 +13,11 @@ export interface Invocation {
 }
 
 /**
- * `--resume` sin id (al final o seguido de otra opción) equivale a `-c`: retomar la más reciente.
- * `parseArgs` exige valor para las opciones de texto, y quien escribe `agente --resume` espera justo eso.
+ * `--resume` sin id (al final o seguido de otra opción) se convierte en `--resume=` (id vacío): la CLI muestra la lista
+ * de conversaciones para elegir. `parseArgs` exige valor para las opciones de texto, y quien escribe `agente --resume` espera justo eso.
  */
 export function normalizeArgs(args: string[]): string[] {
-  return args.map((a, i) => (a === '--resume' && (i === args.length - 1 || args[i + 1]!.startsWith('-')) ? '--continue' : a));
+  return args.map((a, i) => (a === '--resume' && (i === args.length - 1 || args[i + 1]!.startsWith('-')) ? '--resume=' : a));
 }
 
 /** Distancia de edición (Levenshtein), suficiente para detectar erratas de comandos cortos. */

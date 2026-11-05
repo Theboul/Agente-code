@@ -53,7 +53,7 @@ Opciones:
   -r, --role <rol>            (chat) modelo del rol: ${ROLES.join(' | ')}
   -p, --prompt <texto>        (chat) un solo turno y salir
   -c, --continue              (chat) retoma la conversación más reciente de este proyecto
-      --resume [id]           (chat) retoma una conversación concreta (ver: agente sessions); sin id, la más reciente
+      --resume [id]           (chat) retoma una conversación concreta (ver: agente sessions); sin id, eliges de la lista
       --base <rama>           (work) rama base; por defecto la actual
       --worktree              (work) trabajar en un worktree aislado en vez de una rama en el repo
       --no-verify             (work) omitir la verificación automática
@@ -184,7 +184,13 @@ async function main() {
       // Las sesiones se guardan en el chat interactivo; con -p solo si se retoma una (para seguir la conversación).
       const wantsResume = values.continue || values.resume !== undefined;
       const sessionDir = values.prompt === undefined || wantsResume ? await sessionsDir(cwd) : undefined;
-      const resume = wantsResume && sessionDir ? await loadSession(sessionDir, values.resume ?? 'last') : undefined;
+      let ref = values.resume;
+      if (ref === '' && sessionDir) {
+        const picked = await pickSession(sessionDir); // `--resume` sin id: se elige de la lista
+        if (picked === 'cancel') return;
+        ref = picked;
+      }
+      const resume = wantsResume && sessionDir ? await loadSession(sessionDir, ref ?? 'last') : undefined;
       await runChat({
         sessionDir,
         resume,
@@ -222,6 +228,32 @@ async function main() {
     rl.close();
     await mcp.close();
   }
+}
+
+/**
+ * `agente --resume` sin id: lista las conversaciones del proyecto y deja elegir una con las flechas.
+ * Con una sola (o sin terminal interactiva) no hay nada que elegir: devuelve la más reciente.
+ */
+async function pickSession(dir: string): Promise<string | undefined> {
+  const list = await listSessions(dir);
+  if (list.length < 2 || !process.stdin.isTTY) return list[0]?.id;
+  const choice = await selectIndex({
+    count: list.length,
+    keys: stdinKeys(),
+    out: process.stdout,
+    clear: true,
+    render: (sel) => [
+      ...box(
+        list.map((s, n) => ({
+          text: `${n === sel ? '❯' : ' '} ${formatWhen(s.updatedAt)} · ${String(s.messages).padStart(3)} msj · ${truncate(s.title, 50)}`,
+          paint: n === sel ? c.cyan : (t: string) => t,
+        })),
+        { title: 'Conversaciones de este proyecto', width: termWidth(), border: c.cyan },
+      ),
+      c.dim('  ↑↓ elegir · Enter retomar · Esc salir'),
+    ],
+  });
+  return choice === 'cancel' ? 'cancel' : list[choice]?.id;
 }
 
 /** `agente sessions`: conversaciones guardadas de este proyecto, la más reciente primero. */
