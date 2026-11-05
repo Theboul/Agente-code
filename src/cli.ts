@@ -24,7 +24,7 @@ import { defaultHistoryFile, loadHistory } from './ui/history.js';
 import { Interrupt } from './ui/interrupt.js';
 import { Ui } from './ui/render.js';
 import { selectIndex, stdinKeys } from './ui/select.js';
-import { classifyRef, extractJson, type Issue, IssueListSchema, IssueSchema, issueFromFile, issueFromText } from './workflow/issue.js';
+import { askJson, classifyRef, type Issue, IssueListSchema, IssueSchema, issueFromFile, issueFromText } from './workflow/issue.js';
 import { makePrCreator } from './workflow/pr.js';
 import { DEFAULT_PROMPTS, loadPrompt } from './workflow/prompts.js';
 import { runWorkflow, type StageRunner } from './workflow/run.js';
@@ -269,21 +269,17 @@ async function askTracker(ctx: Ctx, prompt: string): Promise<unknown> {
     throw new Error('No hay un tracker conectado. Conéctalo con /connect jira|trello|github (o `agente connect jira`), o pasa un archivo .md / texto libre.');
   }
   const run = makeStageRunner(ctx);
-  const r = await run({
-    role: 'light',
-    system: 'Eres un asistente que consulta un gestor de tareas mediante herramientas MCP. Responde siempre en el formato pedido.',
-    tools: 'full',
-    workdir: ctx.cwd,
-    messages: [{ role: 'user', content: prompt }],
-    quiet: true,
+  return askJson(async () => {
+    const r = await run({
+      role: 'light',
+      system: 'Eres un asistente que consulta un gestor de tareas mediante herramientas MCP. Responde siempre en el formato pedido.',
+      tools: 'full',
+      workdir: ctx.cwd,
+      messages: [{ role: 'user', content: prompt }],
+      quiet: true,
+    });
+    return r.text;
   });
-  try {
-    return extractJson(r.text);
-  } catch (e) {
-    // Sin esto el error esconde lo que contestó el modelo (p. ej. "no pude acceder a Jira"), que es lo único que explica el fallo.
-    const dicho = r.text.trim().replace(/\s+/g, ' ').slice(0, 500);
-    throw new Error(`${e instanceof Error ? e.message : e}${dicho ? ` Respondió: «${dicho}»` : ' La respuesta llegó vacía.'}`);
-  }
 }
 
 async function resolveIssue(ctx: Ctx, ref: string): Promise<Issue> {

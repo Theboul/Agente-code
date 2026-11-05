@@ -57,6 +57,25 @@ export function extractJson(text: string): unknown {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
+/**
+ * Pide una respuesta con JSON y reintenta si el modelo contesta vacío o sin JSON válido (los modelos pequeños lo hacen a veces,
+ * incluso con la misma orden que antes funcionó). Si agota los intentos, el error incluye lo último que dijo el modelo.
+ */
+export async function askJson(ask: () => Promise<string>, tries = 3): Promise<unknown> {
+  let last = '';
+  let reason = '';
+  for (let i = 0; i < tries; i++) {
+    last = await ask();
+    try {
+      return extractJson(last);
+    } catch (e) {
+      reason = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const dicho = last.trim().replace(/\s+/g, ' ').slice(0, 500);
+  throw new Error(`${reason} (${tries} intentos).${dicho ? ` Última respuesta: «${dicho}»` : ' La respuesta llegó vacía.'}`);
+}
+
 export const IssueListSchema = z.array(IssueSchema);
 
 /** feat/proj-123-arreglar-login */
