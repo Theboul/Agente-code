@@ -60,6 +60,25 @@ export async function agentDir(cwd: string): Promise<string> {
   return join(resolve(cwd, common), 'agente');
 }
 
+/**
+ * Rama contra la que abrir el PR. La base de trabajo puede ser solo local (p. ej. una rama sin subir): GitHub la rechaza.
+ * Si no existe en el remoto, se usa la rama por defecto del remoto y se devuelve cuál era la pedida.
+ * Si no se puede saber (sin red, remoto raro), se respeta la base pedida.
+ */
+export async function resolvePrBase(cwd: string, remote: string, base: string): Promise<{ base: string; replaced?: string }> {
+  const has = async (branch: string): Promise<boolean | undefined> => {
+    const r = await git(cwd, ['ls-remote', '--exit-code', '--heads', remote, `refs/heads/${branch}`]);
+    return r.code === 0 ? true : r.code === 2 ? false : undefined; // 2 = sin coincidencias; otro código = no se pudo consultar
+  };
+  if ((await has(base)) !== false) return { base };
+
+  const head = await git(cwd, ['ls-remote', '--symref', remote, 'HEAD']);
+  const byHead = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/m.exec(head.stdout)?.[1];
+  const candidates = [byHead, 'main', 'master'].filter((b): b is string => Boolean(b) && b !== base);
+  for (const candidate of candidates) if ((await has(candidate)) === true) return { base: candidate, replaced: base };
+  return { base };
+}
+
 export function defaultWorktreeDir(root: string): string {
   return join(dirname(root), `${basename(root)}-worktrees`);
 }

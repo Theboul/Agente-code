@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { compareUrl, parseRemote, pushBranch } from '../src/git.js';
+import { compareUrl, parseRemote, pushBranch, resolvePrBase } from '../src/git.js';
 import { hasMcpPrTool, makePrCreator, type PrCreator } from '../src/workflow/pr.js';
 import type { StageRunner } from '../src/workflow/run.js';
 import { findRun, saveRun } from '../src/workflow/runs.js';
@@ -263,5 +263,38 @@ describe('entrega: commit → push → PR → tracker', () => {
     const io = { say: (m: string) => void log.push(m), ask: async () => 'a', choose: async () => ({ kind: 'approve' as const }) };
     await ship({ ...base(dir), config: await loadConfig(dir), io, runStage: fakeStage(), pushConfirmed: true, createPr: async () => ({ method: 'manual' }) });
     expect(log.join('\n')).not.toContain('Mensaje de commit');
+  });
+});
+
+describe('base del PR', () => {
+  it('si la base pedida no existe en el remoto, usa la rama por defecto del remoto', async () => {
+    const { dir } = setup();
+    sh(dir, 'branch', 'add-changelog', 'main'); // solo local: nunca se sube
+    expect(await resolvePrBase(dir, 'origin', 'add-changelog')).toEqual({ base: 'main', replaced: 'add-changelog' });
+  });
+  it('si la base existe en el remoto, no se toca', async () => {
+    const { dir } = setup();
+    expect(await resolvePrBase(dir, 'origin', 'main')).toEqual({ base: 'main' });
+  });
+  it('si el remoto no responde, respeta la base pedida', async () => {
+    const { dir } = setup();
+    sh(dir, 'remote', 'set-url', 'origin', '/no/existe/repo.git');
+    expect(await resolvePrBase(dir, 'origin', 'add-changelog')).toEqual({ base: 'add-changelog' });
+  });
+  it('ship abre el PR contra la rama válida y avisa del cambio', async () => {
+    const { dir } = setup();
+    sh(dir, 'branch', 'add-changelog', 'main');
+    const prs: Parameters<PrCreator>[0][] = [];
+    const { io, log } = scripted();
+    await ship({
+      ...base(dir),
+      base: 'add-changelog',
+      config: await loadConfig(dir),
+      io,
+      runStage: fakeStage(),
+      createPr: async (req) => (prs.push(req), { method: 'gh', url: 'https://github.com/o/r/pull/7' }),
+    });
+    expect(prs[0]?.base).toBe('main');
+    expect(log.join(' ')).toContain('"add-changelog" no existe en origin');
   });
 });
