@@ -1,7 +1,10 @@
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { join } from 'node:path';
 import { createMCPClient, type MCPClient } from '@ai-sdk/mcp';
 import { Experimental_StdioMCPTransport as StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 import type { ToolSet } from 'ai';
 import type { McpServerConfig } from '../config.js';
+import { agenteHome } from '../credentials.js';
 import { authorizeDetailed, denialMessage, type Permissions } from '../permissions.js';
 
 export interface McpServerStatus {
@@ -41,16 +44,52 @@ export function needsApproval(cfg: McpServerConfig, originalTool: string): boole
   return !(Array.isArray(cfg.autoApprove) && cfg.autoApprove.includes(originalTool));
 }
 
+/**
+ * Los servidores locales escriben sus logs por stderr. Heredarlo ensucia la terminal del usuario (logs e incluso stack traces),
+ * así que se redirige a ~/.agente/logs/mcp-<servidor>.log. Se pasa un descriptor de archivo porque `spawn` no admite un stream propio.
+ * Si no se puede abrir el log, se descarta.
+ */
+function openServerLog(name: string): { fd?: number; file?: string } {
+  try {
+    const dir = join(agenteHome(), 'logs');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `mcp-${name.replace(/[^\w.-]/g, '_')}.log`);
+    return { fd: openSync(file, 'a'), file };
+  } catch {
+    return {};
+  }
+}
+
 async function connectOne(name: string, cfg: McpServerConfig, perms: Permissions, timeoutMs: number) {
+  const log = cfg.command ? openServerLog(name) : {};
   const transport = cfg.command
-    ? new StdioMCPTransport({ command: expandEnv(cfg.command), args: cfg.args.map((a) => expandEnv(a)), env: { ...cleanEnv(), ...expandRecord(cfg.env) } })
+    ? new StdioMCPTransport({
+        command: expandEnv(cfg.command),
+        args: cfg.args.map((a) => expandEnv(a)),
+        env: { ...cleanEnv(), ...expandRecord(cfg.env) },
+        stderr: log.fd ?? 'ignore',
+      })
     : { type: cfg.transport, url: expandEnv(cfg.url!), headers: expandRecord(cfg.headers) };
+  const closeLog = () => {
+    if (log.fd !== undefined) {
+      try {
+        closeSync(log.fd);
+      } catch {}
+    }
+  };
 
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, rej) => {
     timer = setTimeout(() => rej(new Error(`Tiempo de espera agotado (${timeoutMs / 1000}s)`)), timeoutMs);
   });
-  const client: MCPClient = await Promise.race([createMCPClient({ transport, name: 'agente' }), timeout]).finally(() => clearTimeout(timer));
+  let client: MCPClient;
+  try {
+    client = await Promise.race([createMCPClient({ transport, name: 'agente' }), timeout]).finally(() => clearTimeout(timer));
+  } catch (e) {
+    closeLog();
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(log.file ? `${msg} (log del servidor: ${log.file})` : msg);
+  }
 
   try {
     const raw = await client.tools();
@@ -78,9 +117,10 @@ async function connectOne(name: string, cfg: McpServerConfig, perms: Permissions
         },
       } as ToolSet[string];
     }
-    return { client, tools };
+    return { client, tools, closeLog };
   } catch (e) {
     await client.close().catch(() => {});
+    closeLog();
     throw e;
   }
 }
@@ -132,6 +172,7 @@ export function cleanEnv(env: NodeJS.ProcessEnv = process.env): Record<string, s
 /** Conecta todos los servidores en paralelo; un servidor caído no impide usar el resto. */
 export async function connectMcpServers(servers: Record<string, McpServerConfig>, perms: Permissions, timeoutMs = 20_000): Promise<McpConnections> {
   const clients: MCPClient[] = [];
+  const closers: (() => void)[] = [];
   const tools: ToolSet = {};
   const status: McpServerStatus[] = [];
 
@@ -145,6 +186,7 @@ export async function connectMcpServers(servers: Record<string, McpServerConfig>
           try {
             const r = await connectOne(name, cfg, perms, addTimeoutMs);
             clients.push(r.client);
+            closers.push(r.closeLog);
             Object.assign(tools, r.tools);
             st = { name, ok: true, tools: Object.keys(r.tools) };
           } catch (e) {
@@ -161,5 +203,13 @@ export async function connectMcpServers(servers: Record<string, McpServerConfig>
   };
 
   await add(servers);
-  return { tools, status, add, close: async () => void (await Promise.allSettled(clients.map((c) => c.close()))) };
+  return {
+    tools,
+    status,
+    add,
+    close: async () => {
+      await Promise.allSettled(clients.map((c) => c.close()));
+      for (const closeLog of closers) closeLog();
+    },
+  };
 }

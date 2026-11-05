@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { McpServerConfig } from '../src/config.js';
@@ -57,6 +60,32 @@ describe('servidor MCP real por stdio', () => {
     const denied = await conn.tools.mcp__tracker__add_comment!.execute!({ key: 'PROJ-1', body: 'hola' } as never, opts);
     expect(denied).toBe('DENEGADO por el usuario.');
     expect(asked).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('stderr de los servidores MCP locales', () => {
+  it('va a un log en AGENTE_HOME/logs y el error de conexión lo menciona', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'mcp-home-'));
+    const previous = process.env.AGENTE_HOME;
+    process.env.AGENTE_HOME = home;
+    let conn: McpConnections | undefined;
+    try {
+      conn = await connectMcpServers(
+        { ruidoso: { ...base, env: { FAKE_STDERR: 'LOG-DEL-SERVIDOR' } }, roto: { ...base, args: ['/no/existe.mjs'] } },
+        perms(false),
+        10_000,
+      );
+      expect(conn.status.find((s) => s.name === 'ruidoso')).toMatchObject({ ok: true });
+      const roto = conn.status.find((s) => s.name === 'roto');
+      expect(roto?.ok).toBe(false);
+      expect(roto?.error).toContain(join(home, 'logs', 'mcp-roto.log'));
+      await conn.close();
+      expect(readFileSync(join(home, 'logs', 'mcp-ruidoso.log'), 'utf8')).toContain('LOG-DEL-SERVIDOR');
+    } finally {
+      await conn?.close();
+      if (previous === undefined) delete process.env.AGENTE_HOME;
+      else process.env.AGENTE_HOME = previous;
+    }
   }, 30_000);
 });
 
