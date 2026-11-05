@@ -35,6 +35,9 @@ const scripted = (answers: string[] = []) => {
   return { log, io: { say: (m: string) => void log.push(m), ask: async () => answers.shift() ?? 'a' } };
 };
 
+/** `gh pr create` que falla, sin ejecutar gh de verdad (en Windows CI tardaba más que el límite del test). */
+const ghFalla = async () => ({ code: 1, stdout: '', stderr: 'no git remotes found' });
+
 const MSG_CON_COAUTOR = 'feat: añade nuevo\n\nDetalle.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nClaude-Session: https://x/y';
 
 function fakeStage(calls: { role: string; tools: string; prompt: string }[] = []): StageRunner {
@@ -106,18 +109,28 @@ describe('sanitizado y utilidades', () => {
   it('en modo auto, si gh falla pasa a la herramienta MCP y, si también falla, al enlace manual con el motivo', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-fb-'));
     sh(dir, 'init', '-q');
-    // gh "autenticado" pero sin remoto de GitHub en este repo: gh pr create falla de verdad.
+    // gh "autenticado" pero `gh pr create` falla (simulado: no depende de tener gh ni red, y no tarda).
     const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 't', body: 'cuerpo', draft: false };
     const mcpOk: StageRunner = async () => ({ text: '```json\n{"url":"https://github.com/o/r/pull/11"}\n```', newMessages: [] });
     const mcpFalla: StageRunner = async () => ({ text: 'sin url', newMessages: [] });
 
-    const viaMcp = await makePrCreator({ method: 'auto', runStage: mcpOk, mcpToolNames: ['mcp__github__create_pull_request'], ghReady: async () => true })(req);
+    const viaMcp = await makePrCreator({
+      method: 'auto',
+      runStage: mcpOk,
+      mcpToolNames: ['mcp__github__create_pull_request'],
+      ghReady: async () => true,
+      runGh: ghFalla,
+    })(req);
     expect(viaMcp).toMatchObject({ method: 'mcp', url: 'https://github.com/o/r/pull/11' });
     expect(viaMcp.note).toMatch(/gh/);
 
-    const manual = await makePrCreator({ method: 'auto', runStage: mcpFalla, mcpToolNames: ['mcp__github__create_pull_request'], ghReady: async () => true })(
-      req,
-    );
+    const manual = await makePrCreator({
+      method: 'auto',
+      runStage: mcpFalla,
+      mcpToolNames: ['mcp__github__create_pull_request'],
+      ghReady: async () => true,
+      runGh: ghFalla,
+    })(req);
     expect(manual.method).toBe('manual');
     expect(manual.manualUrl).toContain('github.com/o/r/compare');
     expect(manual.note).toMatch(/gh.*mcp/s);
@@ -127,9 +140,23 @@ describe('sanitizado y utilidades', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-ex-'));
     sh(dir, 'init', '-q');
     const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 't', body: 'b', draft: false };
-    await expect(makePrCreator({ method: 'gh', runStage: async () => ({ text: '', newMessages: [] }), mcpToolNames: [] })(req)).rejects.toThrow(
+    await expect(makePrCreator({ method: 'gh', runStage: async () => ({ text: '', newMessages: [] }), mcpToolNames: [], runGh: ghFalla })(req)).rejects.toThrow(
       /gh pr create falló/,
     );
+  });
+  it('con gh se pasan la base, la rama y --draft, y se devuelve la URL', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-gh-'));
+    sh(dir, 'init', '-q');
+    const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 'T', body: 'b', draft: true };
+    const calls: string[][] = [];
+    const out = await makePrCreator({
+      method: 'gh',
+      runStage: async () => ({ text: '', newMessages: [] }),
+      mcpToolNames: [],
+      runGh: async (args) => (calls.push(args), { code: 0, stdout: 'aviso\nhttps://github.com/o/r/pull/5\n', stderr: '' }),
+    })(req);
+    expect(out).toMatchObject({ method: 'gh', url: 'https://github.com/o/r/pull/5' });
+    expect(calls[0]).toEqual(expect.arrayContaining(['pr', 'create', '--base', 'main', '--head', 'f/x', '--title', 'T', '--draft']));
   });
 });
 
