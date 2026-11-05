@@ -277,7 +277,13 @@ async function askTracker(ctx: Ctx, prompt: string): Promise<unknown> {
     messages: [{ role: 'user', content: prompt }],
     quiet: true,
   });
-  return extractJson(r.text);
+  try {
+    return extractJson(r.text);
+  } catch (e) {
+    // Sin esto el error esconde lo que contestó el modelo (p. ej. "no pude acceder a Jira"), que es lo único que explica el fallo.
+    const dicho = r.text.trim().replace(/\s+/g, ' ').slice(0, 500);
+    throw new Error(`${e instanceof Error ? e.message : e}${dicho ? ` Respondió: «${dicho}»` : ' La respuesta llegó vacía.'}`);
+  }
 }
 
 async function resolveIssue(ctx: Ctx, ref: string): Promise<Issue> {

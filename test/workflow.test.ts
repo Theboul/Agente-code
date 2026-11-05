@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { currentBranch, slugify } from '../src/git.js';
-import { branchNameFor, classifyRef, extractJson, issueFromText } from '../src/workflow/issue.js';
+import { branchNameFor, classifyRef, extractJson, IssueListSchema, IssueSchema, issueFromText } from '../src/workflow/issue.js';
 import { loadPrompt, renderTemplate } from '../src/workflow/prompts.js';
 import { runWorkflow, type StageRunner } from '../src/workflow/run.js';
 import { detectSetupCommands, detectVerifyCommands } from '../src/workflow/verify.js';
@@ -44,6 +44,17 @@ describe('piezas del flujo', () => {
     expect(classifyRef('arregla el login', cwd).kind).toBe('text');
     expect(classifyRef('noexiste.md', cwd).kind).toBe('text');
     expect(issueFromText('# Título\n\ncuerpo largo')).toMatchObject({ title: 'Título', body: 'cuerpo largo' });
+  });
+  it('una issue del tracker con campos null (Jira sin descripción) se acepta como vacía', () => {
+    expect(IssueSchema.parse({ key: 'DP-1', title: 'Hacer un .md', body: null, url: null })).toEqual({
+      key: 'DP-1',
+      title: 'Hacer un .md',
+      body: '',
+      url: undefined,
+    });
+    expect(IssueSchema.parse({ key: null, title: 'x' })).toEqual({ key: undefined, title: 'x', body: '', url: undefined });
+    expect(() => IssueSchema.parse({ title: null })).toThrow();
+    expect(IssueListSchema.parse([{ key: 'DP-1', title: 'a', body: null }])[0]?.body).toBe('');
   });
   it('extrae JSON de respuestas del modelo', () => {
     expect(extractJson('Aquí:\n```json\n{"a":1}\n```\nfin')).toEqual({ a: 1 });

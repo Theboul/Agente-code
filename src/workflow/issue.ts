@@ -3,11 +3,21 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { slugify } from '../git.js';
 
+// Los modelos devuelven null para lo que el tracker no tiene (p. ej. una issue de Jira sin descripción): se trata como "sin valor".
 export const IssueSchema = z.object({
-  key: z.string().optional(),
+  key: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? undefined),
   title: z.string().min(1),
-  body: z.string().default(''),
-  url: z.string().optional(),
+  body: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? ''),
+  url: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 export type Issue = z.infer<typeof IssueSchema>;
 
