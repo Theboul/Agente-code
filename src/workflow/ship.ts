@@ -229,9 +229,11 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
   if (pr.url) {
     result.prUrl = pr.url;
     io.say(`✓ PR (${pr.method}): ${pr.url}`);
+    if (pr.note) io.say(`  ${pr.note}`);
   } else {
+    const motivo = pr.note ?? 'No hay gh autenticado ni herramienta MCP de PR.';
     io.say(
-      `No se pudo crear el PR automáticamente (no hay gh autenticado ni herramienta MCP).\n  Ábrelo aquí: ${pr.manualUrl ?? '(no se reconoce el remoto)'}\n  Descripción lista en: ${pr.bodyFile}`,
+      `No se pudo crear el PR automáticamente. ${motivo}\n  Ábrelo aquí: ${pr.manualUrl ?? '(no se reconoce el remoto)'}\n  Descripción lista en: ${pr.bodyFile}`,
     );
   }
 

@@ -3,11 +3,21 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { slugify } from '../git.js';
 
+// Los modelos devuelven null para lo que el tracker no tiene (p. ej. una issue de Jira sin descripción): se trata como "sin valor".
 export const IssueSchema = z.object({
-  key: z.string().optional(),
+  key: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? undefined),
   title: z.string().min(1),
-  body: z.string().default(''),
-  url: z.string().optional(),
+  body: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? ''),
+  url: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 export type Issue = z.infer<typeof IssueSchema>;
 
@@ -45,6 +55,25 @@ export function extractJson(text: string): unknown {
   const end = candidate.lastIndexOf(close);
   if (end < start) throw new Error('JSON incompleto en la respuesta del modelo.');
   return JSON.parse(candidate.slice(start, end + 1));
+}
+
+/**
+ * Pide una respuesta con JSON y reintenta si el modelo contesta vacío o sin JSON válido (los modelos pequeños lo hacen a veces,
+ * incluso con la misma orden que antes funcionó). Si agota los intentos, el error incluye lo último que dijo el modelo.
+ */
+export async function askJson(ask: () => Promise<string>, tries = 3): Promise<unknown> {
+  let last = '';
+  let reason = '';
+  for (let i = 0; i < tries; i++) {
+    last = await ask();
+    try {
+      return extractJson(last);
+    } catch (e) {
+      reason = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const dicho = last.trim().replace(/\s+/g, ' ').slice(0, 500);
+  throw new Error(`${reason} (${tries} intentos).${dicho ? ` Última respuesta: «${dicho}»` : ' La respuesta llegó vacía.'}`);
 }
 
 export const IssueListSchema = z.array(IssueSchema);

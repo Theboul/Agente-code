@@ -49,13 +49,28 @@ export interface Permissions {
   allowedCommands: string[];
 }
 
+// Lo que puede preceder al comando real sin dejar de ser "posición de comando": envoltorios, palabras clave del shell,
+// intérpretes con -c (`bash -lc`) y asignaciones `VAR=1`.
+const COMMAND_PREFIX = [
+  'nohup|time|env|exec|eval|command|builtin|nice|setsid|xargs|stdbuf|!',
+  'then|do|else|elif|if|while|until',
+  'timeout\\s+\\S+',
+  '(?:ba|z|da|k)?sh\\s+-\\w*c',
+  '\\w+=\\S*',
+].join('|');
+// Apagado del sistema: solo si es el comando (inicio o tras ; & | ( { ` salto de línea), no si es texto de un argumento.
+const SHUTDOWN_AS_COMMAND = new RegExp(`(?:^|[;&|\`({\\n])\\s*(?:(?:${COMMAND_PREFIX})\\s+)*(?:\\S*/)?(?:shutdown|reboot|poweroff)\\b`);
+
 // Bloqueados siempre, incluso con --yes (ver `forbidden`).
 const DENY_PATTERNS = [
   /\b(sudo|doas)\b/,
   /\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(ba|z|da|k|c)?sh\b/,
   /\bmkfs(\.\w+)?\b/,
   /\bdd\b[^\n]*\bof=\/dev\/(?!null\b)/,
-  /\b(shutdown|reboot|poweroff)\b/,
+  SHUTDOWN_AS_COMMAND,
+  // `find … -exec reboot`: el programa va tras un argumento, no en posición de comando.
+  /\s-exec(?:dir)?\s+(?:\S*\/)?(?:shutdown|reboot|poweroff)\b/,
+  /\bsystemctl\s+(?:poweroff|reboot|halt)\b/,
   /:\(\)\s*\{/,
 ];
 // Tras `git ... push`: fuerza, espejo, borrado remoto, refspec con "+" o ":rama".

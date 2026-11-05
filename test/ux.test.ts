@@ -101,7 +101,8 @@ describe('historial entre sesiones', () => {
     const h = await loadHistory(file);
     expect(h).toHaveLength(500);
     expect(h[0]).toBe('nueva');
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows no tiene bits POSIX: chmod 600 no cambia el modo que informa stat.
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 });
 

@@ -49,7 +49,8 @@ describe('credenciales fuera del repositorio', () => {
     await saveCredential('TRELLO_TOKEN', 'xyz', file);
     await saveCredential('JIRA_API_TOKEN', 'nuevo', file);
     expect(parseCredentials(readFileSync(file, 'utf8'))).toEqual({ JIRA_API_TOKEN: 'nuevo', TRELLO_TOKEN: 'xyz' });
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows no tiene bits POSIX: chmod 600 no cambia el modo que informa stat.
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
     await expect(saveCredential('MAL NOMBRE', 'x', file)).rejects.toThrow(/inválido/);
     await expect(saveCredential('OK', 'a\nb', file)).rejects.toThrow(/saltos/);
     await expect(saveCredential('OK', '  ', file)).rejects.toThrow();

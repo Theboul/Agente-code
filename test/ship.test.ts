@@ -103,6 +103,34 @@ describe('sanitizado y utilidades', () => {
     })(req);
     expect(viaMcp).toMatchObject({ method: 'mcp', url: 'https://github.com/o/r/pull/9' });
   });
+  it('en modo auto, si gh falla pasa a la herramienta MCP y, si también falla, al enlace manual con el motivo', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-fb-'));
+    sh(dir, 'init', '-q');
+    // gh "autenticado" pero sin remoto de GitHub en este repo: gh pr create falla de verdad.
+    const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 't', body: 'cuerpo', draft: false };
+    const mcpOk: StageRunner = async () => ({ text: '```json\n{"url":"https://github.com/o/r/pull/11"}\n```', newMessages: [] });
+    const mcpFalla: StageRunner = async () => ({ text: 'sin url', newMessages: [] });
+
+    const viaMcp = await makePrCreator({ method: 'auto', runStage: mcpOk, mcpToolNames: ['mcp__github__create_pull_request'], ghReady: async () => true })(req);
+    expect(viaMcp).toMatchObject({ method: 'mcp', url: 'https://github.com/o/r/pull/11' });
+    expect(viaMcp.note).toMatch(/gh/);
+
+    const manual = await makePrCreator({ method: 'auto', runStage: mcpFalla, mcpToolNames: ['mcp__github__create_pull_request'], ghReady: async () => true })(
+      req,
+    );
+    expect(manual.method).toBe('manual');
+    expect(manual.manualUrl).toContain('github.com/o/r/compare');
+    expect(manual.note).toMatch(/gh.*mcp/s);
+    expect(manual.bodyFile).toBeTruthy();
+  });
+  it('con un método explícito no se oculta el fallo', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-ex-'));
+    sh(dir, 'init', '-q');
+    const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 't', body: 'b', draft: false };
+    await expect(makePrCreator({ method: 'gh', runStage: async () => ({ text: '', newMessages: [] }), mcpToolNames: [] })(req)).rejects.toThrow(
+      /gh pr create falló/,
+    );
+  });
 });
 
 describe('entrega: commit → push → PR → tracker', () => {

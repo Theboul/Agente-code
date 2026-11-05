@@ -24,7 +24,7 @@ import { defaultHistoryFile, loadHistory } from './ui/history.js';
 import { Interrupt } from './ui/interrupt.js';
 import { Ui } from './ui/render.js';
 import { selectIndex, stdinKeys } from './ui/select.js';
-import { classifyRef, extractJson, type Issue, IssueListSchema, IssueSchema, issueFromFile, issueFromText } from './workflow/issue.js';
+import { askJson, classifyRef, type Issue, IssueListSchema, IssueSchema, issueFromFile, issueFromText } from './workflow/issue.js';
 import { makePrCreator } from './workflow/pr.js';
 import { DEFAULT_PROMPTS, loadPrompt } from './workflow/prompts.js';
 import { runWorkflow, type StageRunner } from './workflow/run.js';
@@ -55,7 +55,7 @@ Opciones:
       --no-verify             (work) omitir la verificación automática
       --ship                  (work/ship) entregar sin confirmaciones intermedias (commit, push y PR)
       --draft                 (ship) abrir el PR como borrador
-  -y, --yes                   Aprobar planes, ediciones y comandos sin preguntar
+  -y, --yes                   Aprobar planes y ediciones sin preguntar (los comandos fuera de allowedCommands siguen pidiendo confirmación)
   -h, --help
 
 Dentro de la sesión: /work, /issues, /ship, /connect, /login, /mode, /model, /role, /mcp, /status, /clear, /help, /exit
@@ -269,15 +269,17 @@ async function askTracker(ctx: Ctx, prompt: string): Promise<unknown> {
     throw new Error('No hay un tracker conectado. Conéctalo con /connect jira|trello|github (o `agente connect jira`), o pasa un archivo .md / texto libre.');
   }
   const run = makeStageRunner(ctx);
-  const r = await run({
-    role: 'light',
-    system: 'Eres un asistente que consulta un gestor de tareas mediante herramientas MCP. Responde siempre en el formato pedido.',
-    tools: 'full',
-    workdir: ctx.cwd,
-    messages: [{ role: 'user', content: prompt }],
-    quiet: true,
+  return askJson(async () => {
+    const r = await run({
+      role: 'light',
+      system: 'Eres un asistente que consulta un gestor de tareas mediante herramientas MCP. Responde siempre en el formato pedido.',
+      tools: 'full',
+      workdir: ctx.cwd,
+      messages: [{ role: 'user', content: prompt }],
+      quiet: true,
+    });
+    return r.text;
   });
-  return extractJson(r.text);
 }
 
 async function resolveIssue(ctx: Ctx, ref: string): Promise<Issue> {

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { currentBranch, slugify } from '../src/git.js';
-import { branchNameFor, classifyRef, extractJson, issueFromText } from '../src/workflow/issue.js';
+import { askJson, branchNameFor, classifyRef, extractJson, IssueListSchema, IssueSchema, issueFromText } from '../src/workflow/issue.js';
 import { loadPrompt, renderTemplate } from '../src/workflow/prompts.js';
 import { runWorkflow, type StageRunner } from '../src/workflow/run.js';
 import { detectSetupCommands, detectVerifyCommands } from '../src/workflow/verify.js';
@@ -44,6 +44,17 @@ describe('piezas del flujo', () => {
     expect(classifyRef('arregla el login', cwd).kind).toBe('text');
     expect(classifyRef('noexiste.md', cwd).kind).toBe('text');
     expect(issueFromText('# Título\n\ncuerpo largo')).toMatchObject({ title: 'Título', body: 'cuerpo largo' });
+  });
+  it('una issue del tracker con campos null (Jira sin descripción) se acepta como vacía', () => {
+    expect(IssueSchema.parse({ key: 'DP-1', title: 'Hacer un .md', body: null, url: null })).toEqual({
+      key: 'DP-1',
+      title: 'Hacer un .md',
+      body: '',
+      url: undefined,
+    });
+    expect(IssueSchema.parse({ key: null, title: 'x' })).toEqual({ key: undefined, title: 'x', body: '', url: undefined });
+    expect(() => IssueSchema.parse({ title: null })).toThrow();
+    expect(IssueListSchema.parse([{ key: 'DP-1', title: 'a', body: null }])[0]?.body).toBe('');
   });
   it('extrae JSON de respuestas del modelo', () => {
     expect(extractJson('Aquí:\n```json\n{"a":1}\n```\nfin')).toEqual({ a: 1 });
@@ -172,5 +183,41 @@ describe('flujo completo (modelo simulado, repo git real)', () => {
         io: scripted([]).io,
       }),
     ).rejects.toThrow(/repositorio git/);
+  });
+});
+
+describe('askJson (reintentos cuando el modelo no devuelve JSON)', () => {
+  const secuencia = (...respuestas: string[]) => {
+    let n = 0;
+    return { ask: async () => respuestas[n++] ?? '', llamadas: () => n };
+  };
+
+  it('devuelve el JSON a la primera sin reintentar', async () => {
+    const s = secuencia('```json\n{"a":1}\n```');
+    expect(await askJson(s.ask)).toEqual({ a: 1 });
+    expect(s.llamadas()).toBe(1);
+  });
+  it('reintenta si el modelo contesta vacío y se queda con la primera respuesta válida', async () => {
+    const s = secuencia('', '   ', '[{"key":"DP-1","title":"x"}]');
+    expect(await askJson(s.ask)).toEqual([{ key: 'DP-1', title: 'x' }]);
+    expect(s.llamadas()).toBe(3);
+  });
+  it('si agota los intentos, el error dice cuántos fueron y lo último que respondió', async () => {
+    const s = secuencia('', 'no pude acceder a Jira', 'sigo sin poder');
+    await expect(askJson(s.ask)).rejects.toThrow(/3 intentos.*Última respuesta: «sigo sin poder»/);
+    expect(s.llamadas()).toBe(3);
+  });
+  it('con respuesta vacía en todos los intentos lo dice', async () => {
+    await expect(askJson(secuencia('', '', '').ask)).rejects.toThrow(/llegó vacía/);
+  });
+  it('un error al preguntar (red, proveedor) no se reintenta: se propaga', async () => {
+    let n = 0;
+    await expect(
+      askJson(async () => {
+        n++;
+        throw new Error('429 límite');
+      }),
+    ).rejects.toThrow('429 límite');
+    expect(n).toBe(1);
   });
 });

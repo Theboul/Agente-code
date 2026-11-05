@@ -73,9 +73,22 @@ describe('bash', () => {
     expect(r).toMatchObject({ code: 2, timedOut: false });
     expect(r.output).toContain('ok');
   });
-  it('un cierre tardío tras el timeout no cambia el resultado ya entregado', async () => {
-    const r = await execCommand(process.cwd(), 'echo uno; sleep 1', 200);
-    await new Promise((res) => setTimeout(res, 1500));
-    expect(r).toMatchObject({ code: null, timedOut: true });
+  it('un cierre tardío tras el timeout no provoca errores ni añade salida al resultado ya entregado', async () => {
+    const fallos: unknown[] = [];
+    const registrar = (e: unknown) => fallos.push(e);
+    process.on('unhandledRejection', registrar);
+    process.on('uncaughtException', registrar);
+    try {
+      const r = await execCommand(process.cwd(), 'echo antes; sleep 1; echo despues', 200);
+      const salida = r.output;
+      await new Promise((res) => setTimeout(res, 1500));
+      expect(fallos).toEqual([]);
+      expect(r).toMatchObject({ code: null, timedOut: true });
+      expect(r.output).toBe(salida);
+      expect(r.output).not.toContain('despues');
+    } finally {
+      process.off('unhandledRejection', registrar);
+      process.off('uncaughtException', registrar);
+    }
   });
 });
