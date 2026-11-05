@@ -10,7 +10,7 @@ import { type ConnectDeps, connectTracker, keyInstructions, loginProvider } from
 import { PRESETS } from './connect/presets.js';
 import { applyCredentials } from './credentials.js';
 import { currentBranch, git, repoRoot } from './git.js';
-import { parseInvocation } from './invocation.js';
+import { normalizeArgs, parseInvocation } from './invocation.js';
 import { connectMcpServers, type McpConnections, toolsOfServer } from './mcp/client.js';
 import { MODES, type Permissions } from './permissions.js';
 import { missingKeyHint, PROVIDER_HELP } from './providers.js';
@@ -53,7 +53,7 @@ Opciones:
   -r, --role <rol>            (chat) modelo del rol: ${ROLES.join(' | ')}
   -p, --prompt <texto>        (chat) un solo turno y salir
   -c, --continue              (chat) retoma la conversación más reciente de este proyecto
-      --resume <id>           (chat) retoma una conversación concreta (ver: agente sessions)
+      --resume [id]           (chat) retoma una conversación concreta (ver: agente sessions); sin id, eliges de la lista
       --base <rama>           (work) rama base; por defecto la actual
       --worktree              (work) trabajar en un worktree aislado en vez de una rama en el repo
       --no-verify             (work) omitir la verificación automática
@@ -68,23 +68,35 @@ Configuración: agente.config.json (ver README).`;
 
 const dim = c.dim;
 
-const { values, positionals } = parseArgs({
-  allowPositionals: true,
-  options: {
-    model: { type: 'string', short: 'm' },
-    role: { type: 'string', short: 'r' },
-    prompt: { type: 'string', short: 'p' },
-    continue: { type: 'boolean', short: 'c' },
-    resume: { type: 'string' },
-    base: { type: 'string' },
-    worktree: { type: 'boolean' },
-    'no-verify': { type: 'boolean' },
-    ship: { type: 'boolean' },
-    draft: { type: 'boolean' },
-    yes: { type: 'boolean', short: 'y' },
-    help: { type: 'boolean', short: 'h' },
-  },
-});
+/** Una opción mal escrita o sin valor se explica en una línea, no con el stack trace de Node. */
+function parseCli(args: string[]) {
+  try {
+    return parseArgs({
+      args: normalizeArgs(args),
+      allowPositionals: true,
+      options: {
+        model: { type: 'string', short: 'm' },
+        role: { type: 'string', short: 'r' },
+        prompt: { type: 'string', short: 'p' },
+        continue: { type: 'boolean', short: 'c' },
+        resume: { type: 'string' },
+        base: { type: 'string' },
+        worktree: { type: 'boolean' },
+        'no-verify': { type: 'boolean' },
+        ship: { type: 'boolean' },
+        draft: { type: 'boolean' },
+        yes: { type: 'boolean', short: 'y' },
+        help: { type: 'boolean', short: 'h' },
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message.split('. To specify')[0] : String(e);
+    console.error(`${msg}\nMira las opciones con: agente --help`);
+    process.exit(1);
+  }
+}
+
+const { values, positionals } = parseCli(process.argv.slice(2));
 
 const SLASH_COMMANDS = ['/work', '/issues', '/ship', '/mode', '/model', '/role', '/mcp', '/status', '/clear', '/sessions', '/resume', '/help', '/exit'];
 
@@ -172,7 +184,13 @@ async function main() {
       // Las sesiones se guardan en el chat interactivo; con -p solo si se retoma una (para seguir la conversación).
       const wantsResume = values.continue || values.resume !== undefined;
       const sessionDir = values.prompt === undefined || wantsResume ? await sessionsDir(cwd) : undefined;
-      const resume = wantsResume && sessionDir ? await loadSession(sessionDir, values.resume ?? 'last') : undefined;
+      let ref = values.resume;
+      if (ref === '' && sessionDir) {
+        const picked = await pickSession(sessionDir); // `--resume` sin id: se elige de la lista
+        if (picked === 'cancel') return;
+        ref = picked;
+      }
+      const resume = wantsResume && sessionDir ? await loadSession(sessionDir, ref ?? 'last') : undefined;
       await runChat({
         sessionDir,
         resume,
@@ -210,6 +228,32 @@ async function main() {
     rl.close();
     await mcp.close();
   }
+}
+
+/**
+ * `agente --resume` sin id: lista las conversaciones del proyecto y deja elegir una con las flechas.
+ * Con una sola (o sin terminal interactiva) no hay nada que elegir: devuelve la más reciente.
+ */
+async function pickSession(dir: string): Promise<string | undefined> {
+  const list = await listSessions(dir);
+  if (list.length < 2 || !process.stdin.isTTY) return list[0]?.id;
+  const choice = await selectIndex({
+    count: list.length,
+    keys: stdinKeys(),
+    out: process.stdout,
+    clear: true,
+    render: (sel) => [
+      ...box(
+        list.map((s, n) => ({
+          text: `${n === sel ? '❯' : ' '} ${formatWhen(s.updatedAt)} · ${String(s.messages).padStart(3)} msj · ${truncate(s.title, 50)}`,
+          paint: n === sel ? c.cyan : (t: string) => t,
+        })),
+        { title: 'Conversaciones de este proyecto', width: termWidth(), border: c.cyan },
+      ),
+      c.dim('  ↑↓ elegir · Enter retomar · Esc salir'),
+    ],
+  });
+  return choice === 'cancel' ? 'cancel' : list[choice]?.id;
 }
 
 /** `agente sessions`: conversaciones guardadas de este proyecto, la más reciente primero. */

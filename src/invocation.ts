@@ -12,6 +12,14 @@ export interface Invocation {
   suggest?: Command;
 }
 
+/**
+ * `--resume` sin id (al final o seguido de otra opción) se convierte en `--resume=` (id vacío): la CLI muestra la lista
+ * de conversaciones para elegir. `parseArgs` exige valor para las opciones de texto, y quien escribe `agente --resume` espera justo eso.
+ */
+export function normalizeArgs(args: string[]): string[] {
+  return args.map((a, i) => (a === '--resume' && (i === args.length - 1 || args[i + 1]!.startsWith('-')) ? '--resume=' : a));
+}
+
 /** Distancia de edición (Levenshtein), suficiente para detectar erratas de comandos cortos. */
 export function distance(a: string, b: string): number {
   const row = Array.from({ length: b.length + 1 }, (_, j) => j);

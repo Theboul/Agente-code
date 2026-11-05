@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { distance, parseInvocation } from '../src/invocation.js';
+import { distance, normalizeArgs, parseInvocation } from '../src/invocation.js';
 import { authorizeDetailed, denialMessage, MODES, nextMode, type PermissionKind, type PermissionRequest, type Permissions } from '../src/permissions.js';
 import { stripAnsi } from '../src/ui/ansi.js';
 import { type CompletionState, createCompleter } from '../src/ui/complete.js';
@@ -10,6 +10,16 @@ import { createDecisionPrompter } from '../src/ui/dialog.js';
 import { appendHistory, loadHistory } from '../src/ui/history.js';
 import { Ui } from '../src/ui/render.js';
 import type { Key, KeySource } from '../src/ui/select.js';
+
+describe('--resume sin id', () => {
+  it('sin id pasa a id vacío (la CLI muestra la lista); con id se respeta', () => {
+    expect(normalizeArgs(['--resume'])).toEqual(['--resume=']);
+    expect(normalizeArgs(['--resume', '-m', 'x/y'])).toEqual(['--resume=', '-m', 'x/y']);
+    expect(normalizeArgs(['-m', 'x/y', '--resume'])).toEqual(['-m', 'x/y', '--resume=']);
+    expect(normalizeArgs(['--resume', '20261105-001500-a3f9'])).toEqual(['--resume', '20261105-001500-a3f9']);
+    expect(normalizeArgs(['work', 'DP-1'])).toEqual(['work', 'DP-1']);
+  });
+});
 
 describe('atajos de la línea de comandos', () => {
   const dir = mkdtempSync(join(tmpdir(), 'inv-'));
