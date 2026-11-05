@@ -2,9 +2,46 @@ export type Decision = 'allow' | 'ask' | 'deny';
 
 export type Asker = (question: string) => Promise<boolean>;
 
+export type PermissionKind = 'edit' | 'create' | 'delete' | 'move' | 'command' | 'mcp' | 'web' | 'workflow';
+
+/** Lo que el agente quiere hacer, con el detalle para mostrárselo al usuario antes de decidir. */
+export interface PermissionRequest {
+  kind: PermissionKind;
+  title: string;
+  target?: string;
+  /** Líneas de vista previa; las que empiezan con "+ " o "- " se muestran como diff. */
+  preview?: string[];
+  question: string;
+  /** Si existe, se ofrece "sí, y no volver a preguntar en esta sesión" para esa clave. */
+  session?: { key: string; label: string };
+}
+
+/** `feedback`: lo que el usuario pidió hacer distinto. `reason`: motivo del sistema (p. ej. modo solo plan). */
+export type PermissionReply = { allow: true } | { allow: false; feedback?: string; reason?: string };
+
+/** preguntar: diálogo en cada cambio · edits: las ediciones de archivos se aceptan solas · plan: solo lectura, ningún cambio. */
+export type PermissionMode = 'ask' | 'edits' | 'plan';
+
+export const MODES: PermissionMode[] = ['ask', 'edits', 'plan'];
+
+export const MODE_LABEL: Record<PermissionMode, string> = {
+  ask: 'preguntar antes de cambiar',
+  edits: 'aceptar ediciones solas',
+  plan: 'solo plan (sin cambios)',
+};
+
+export const nextMode = (m: PermissionMode): PermissionMode => MODES[(MODES.indexOf(m) + 1) % MODES.length]!;
+
+const PLAN_MODE_DENIED = 'Modo solo plan: no se permiten cambios ni comandos. Investiga con las herramientas de lectura y propón un plan.';
+const BLOCKED_IN_PLAN: PermissionKind[] = ['edit', 'create', 'delete', 'move', 'command', 'mcp', 'workflow'];
+
 export interface Permissions {
+  /** Modo de permisos de la sesión (por defecto "ask"). Shift+Tab lo cambia en la sesión interactiva. */
+  mode?: PermissionMode;
   /** Pide confirmación al usuario (o la deniega si no hay terminal interactivo). */
   confirm: Asker;
+  /** Diálogo con opciones (sí / sí en esta sesión / no y decir qué hacer). Si falta, se usa `confirm`. */
+  prompt?: (request: PermissionRequest) => Promise<PermissionReply>;
   /** Pregunta abierta al usuario (herramienta ask_user). Sin terminal interactivo devuelve undefined. */
   ask?: (question: string) => Promise<string | undefined>;
   /** Aprobar todo sin preguntar (modo --yes). */
@@ -154,4 +191,38 @@ export async function authorize(perms: Permissions, decision: Decision, question
   if (decision === 'deny') return false;
   if (decision === 'allow' || perms.autoApprove) return true;
   return perms.confirm(question);
+}
+
+/** Como `authorize`, pero usa el diálogo con opciones cuando hay uno y devuelve la indicación del usuario si rechaza. */
+export async function authorizeDetailed(perms: Permissions, decision: Decision, request: PermissionRequest): Promise<PermissionReply> {
+  if (decision === 'deny') return { allow: false };
+  if (decision === 'allow' || perms.autoApprove) return { allow: true };
+  if (perms.mode === 'plan' && BLOCKED_IN_PLAN.includes(request.kind)) return { allow: false, reason: PLAN_MODE_DENIED };
+  if (perms.mode === 'edits' && (request.kind === 'edit' || request.kind === 'create')) return { allow: true };
+  if (perms.prompt) return perms.prompt(request);
+  return (await perms.confirm(request.question)) ? { allow: true } : { allow: false };
+}
+
+/** Texto que ve el modelo cuando el usuario rechaza: incluye lo que pidió hacer distinto. */
+export function denialMessage(reply: PermissionReply): string {
+  if (!reply.allow && reply.reason) return `DENEGADO: ${reply.reason}`;
+  const feedback = !reply.allow && reply.feedback ? ` El usuario indica: ${reply.feedback}` : '';
+  return `DENEGADO por el usuario.${feedback}`;
+}
+
+const CHAIN_OR_ESCAPE = /[;&|`$()<>\n]|(^|\s)(\.\.|~|\/)/;
+const SECRET_HINT = /(\.env|id_rsa|id_ed25519|\.pem|\.key|\.ssh|\.aws|\.npmrc|credentials)/i;
+// Programas cuyo primer argumento es el subcomando que importa (git commit, npm run…).
+const SUBCOMMAND_TOOLS = new Set(['git', 'npm', 'pnpm', 'yarn', 'npx', 'cargo', 'go', 'docker', 'make', 'pip', 'python', 'node']);
+
+/**
+ * Clave para "no volver a preguntar en esta sesión" de un comando, o undefined si no se debe ofrecer:
+ * comandos encadenados, que salen del proyecto o tocan archivos con secretos siempre preguntan.
+ */
+export function commandSessionKey(command: string): { key: string; label: string } | undefined {
+  const cmd = command.trim();
+  if (!cmd || CHAIN_OR_ESCAPE.test(cmd) || SECRET_HINT.test(cmd)) return undefined;
+  const [first, second] = cmd.split(/\s+/);
+  const prefix = first && second && SUBCOMMAND_TOOLS.has(first) && !second.startsWith('-') ? `${first} ${second}` : first;
+  return prefix ? { key: `cmd:${prefix}`, label: `los comandos "${prefix} …"` } : undefined;
 }

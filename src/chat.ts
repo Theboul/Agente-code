@@ -1,0 +1,253 @@
+import type { createInterface } from 'node:readline/promises';
+import { type ModelMessage, type ToolSet, tool } from 'ai';
+import { z } from 'zod';
+import { buildSystemPrompt } from './agent/system.js';
+import { type Config, modelFor, ROLES, type Role } from './config.js';
+import { currentBranch } from './git.js';
+import type { McpConnections } from './mcp/client.js';
+import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type PermissionMode, type Permissions } from './permissions.js';
+import { missingKeyHint } from './providers.js';
+import { nativeTools } from './tools/index.js';
+import { modelTurn } from './turn.js';
+import { c } from './ui/ansi.js';
+import type { CompletionState } from './ui/complete.js';
+import { appendHistory } from './ui/history.js';
+import type { Interrupt } from './ui/interrupt.js';
+import type { Ui } from './ui/render.js';
+
+export interface ChatHandlers {
+  /** Flujo completo para una issue (clave, URL, archivo o texto). */
+  work(ref: string): Promise<void>;
+  issues(): Promise<void>;
+  ship(branch?: string): Promise<void>;
+  /** Conexión guiada a Jira, Trello o GitHub. */
+  connect(which?: string): Promise<void>;
+  /** Pide y guarda la clave del proveedor del modelo indicado. */
+  login(modelId: string): Promise<void>;
+}
+
+export interface ChatDeps {
+  cwd: string;
+  config: Config;
+  perms: Permissions;
+  mcp: McpConnections;
+  rl: ReturnType<typeof createInterface>;
+  ui: Ui;
+  interrupt: Interrupt;
+  model?: string;
+  role?: Role;
+  /** Un solo turno y salir (-p). */
+  prompt?: string;
+  /** Primer mensaje de la sesión (`agente "pregunta"`); después sigue interactiva. */
+  initialPrompt?: string;
+  /** Estado del autocompletado con Tab; la sesión lo mantiene al día. */
+  completion: CompletionState;
+  /** Archivo donde se guarda el historial de lo escrito (flecha arriba entre sesiones). */
+  historyFile?: string;
+  handlers: ChatHandlers;
+}
+
+const COMMANDS: [string, string][] = [
+  ['/work [issue]', 'Flujo completo: plan → rama → código → verificación → revisión. Sin argumento abre /issues'],
+  ['/issues', 'Lista las issues del tracker (MCP) y te deja elegir una'],
+  ['/ship [rama]', 'Commit → push → PR → actualiza el tracker'],
+  ['/connect [jira|trello|github]', 'Conecta tu tracker paso a paso (guarda el token fuera del repo)'],
+  ['/login', 'Pega la clave del proveedor del modelo actual (Gemini, Claude, OpenAI)'],
+  ['/mode [ask|edits|plan]', 'Modo de permisos (Shift+Tab lo cambia): preguntar, aceptar ediciones solas, solo plan'],
+  ['/model <prov/modelo>', 'Cambia de modelo'],
+  ['/role <plan|implement|light>', 'Usa el modelo configurado para un rol'],
+  ['/mcp', 'Estado y herramientas de los servidores MCP'],
+  ['/status', 'Modelo, carpeta, rama y tamaño del historial'],
+  ['/clear', 'Borra el historial de la conversación'],
+  ['/help', 'Esta ayuda'],
+  ['/exit', 'Salir'],
+];
+
+const CHAT_RULES = `
+- Estás en una sesión interactiva: el usuario puede pedirte preguntas sobre el proyecto o cambios puntuales; respóndelos directamente con tus herramientas.
+- Si pide resolver una issue o tarea completa (con plan, rama, verificación y PR), usa start_workflow en lugar de hacerlo a mano.`;
+
+/** Herramienta que permite al modelo lanzar el flujo completo cuando el usuario lo pide en lenguaje natural. */
+export function workflowTool(perms: Permissions, handlers: ChatHandlers) {
+  return tool({
+    description:
+      'Inicia el flujo completo de trabajo (plan → rama aislada → implementación → verificación → revisión) para una tarea. ' +
+      'Úsala cuando el usuario pida implementar o resolver una issue entera. La issue puede ser una clave (PROJ-123), #45, una URL, una ruta a un .md o una descripción. ' +
+      'Para preguntas o cambios pequeños usa las demás herramientas.',
+    inputSchema: z.object({ issue: z.string().describe('Referencia o descripción de la tarea') }),
+    execute: async ({ issue }) => {
+      const reply = await authorizeDetailed(perms, 'ask', {
+        kind: 'workflow',
+        title: 'Iniciar flujo de trabajo',
+        target: issue,
+        question: `¿Iniciar el flujo completo para "${issue}"?`,
+      });
+      if (!reply.allow) return denialMessage(reply);
+      try {
+        await handlers.work(issue);
+        return 'El flujo terminó (el usuario vio el resultado en pantalla).';
+      } catch (e) {
+        return `Error en el flujo: ${e instanceof Error ? e.message : e}`;
+      }
+    },
+  });
+}
+
+/** Sesión interactiva al estilo Claude Code: conversación libre sobre el proyecto y comandos "/". */
+export async function runChat(d: ChatDeps): Promise<void> {
+  const { cwd, config, perms, mcp, rl, ui, interrupt, handlers } = d;
+  let modelId = d.model ?? modelFor(config, d.role ?? 'implement');
+  const system = `${await buildSystemPrompt(cwd)}${CHAT_RULES}`;
+  const local: ToolSet = {
+    ...nativeTools(cwd, perms, { onTodos: (t) => ui.todos(t) }),
+    ...(d.prompt === undefined ? { start_workflow: workflowTool(perms, handlers) } : {}),
+  };
+  // Se arma en cada turno: así las herramientas de un tracker recién conectado (/connect) están disponibles al instante.
+  const currentTools = (): ToolSet => ({ ...mcp.tools, ...local });
+  let history: ModelMessage[] = [];
+
+  const turn = async (input: string) => {
+    history.push({ role: 'user', content: input });
+    try {
+      const { newMessages } = await modelTurn({ config, ui, interrupt }, { modelId, system, tools: currentTools(), messages: history });
+      history.push(...newMessages);
+    } catch (e) {
+      history.pop();
+      const aborted = e instanceof Error && e.message.startsWith('Interrumpido');
+      if (aborted) ui.notice('(interrumpido)');
+      else if (d.prompt !== undefined) throw e;
+      else ui.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  if (d.prompt !== undefined) return turn(d.prompt);
+
+  const branch = await currentBranch(cwd).catch(() => undefined);
+  ui.banner({ model: modelId, cwd, branch, mcp: Object.keys(mcp.tools).length || undefined });
+  if (!mcp.status.some((x) => x.ok)) ui.notice('Sin tracker conectado: /connect jira|trello|github');
+  const modeLabel = () => `modo: ${MODE_LABEL[perms.mode ?? 'ask']} · Shift+Tab cambia`;
+  d.completion.suppress = false;
+
+  // Shift+Tab cambia el modo. Se escucha antes que readline para marcar que no es un Tab de completado.
+  const onKey = (_s: string | undefined, key: { name?: string; shift?: boolean } | undefined) => {
+    if (key?.name !== 'tab' || !key.shift) return;
+    d.completion.suppress = true;
+    perms.mode = nextMode(perms.mode ?? 'ask');
+    ui.redrawRule(modeLabel(), rl.line.length);
+  };
+  if (process.stdin.isTTY) process.stdin.prependListener('keypress', onKey);
+
+  if (d.initialPrompt) await turn(d.initialPrompt);
+
+  const printMcp = () => {
+    if (!mcp.status.length) return ui.notice('Sin servidores MCP configurados (mcpServers en agente.config.json).');
+    for (const s of mcp.status) {
+      ui.notice(s.ok ? `✓ ${s.name}: ${s.tools.length} herramientas` : `✗ ${s.name}: ${s.error}`);
+      if (s.ok) for (const t of s.tools) ui.notice(`    ${t}`);
+    }
+  };
+
+  const warnMissingKey = () => {
+    const hint = missingKeyHint(modelId, config);
+    if (hint) ui.warn(`Falta ${hint} para ${modelId}. Pégala con /login.`);
+  };
+
+  const command = async (line: string): Promise<boolean> => {
+    const [name = '', ...rest] = line.split(/\s+/);
+    const arg = rest.join(' ').trim();
+    switch (name) {
+      case '/exit':
+      case '/salir':
+      case '/quit':
+        return false;
+      case '/':
+      case '/help':
+      case '/?':
+        ui.table(COMMANDS);
+        break;
+      case '/clear':
+        history = [];
+        ui.notice('Historial limpiado.');
+        break;
+      case '/mcp':
+        printMcp();
+        break;
+      case '/status':
+        ui.notice(
+          `modelo: ${modelId}\nmodo: ${MODE_LABEL[perms.mode ?? 'ask']}\ncarpeta: ${cwd}${branch ? ` (${branch})` : ''}\nhistorial: ${history.length} mensajes`,
+        );
+        break;
+      case '/mode':
+        if (!arg) ui.notice(`Modo: ${MODE_LABEL[perms.mode ?? 'ask']}. Opciones: ${MODES.join(', ')} (o Shift+Tab)`);
+        else if (!MODES.includes(arg as PermissionMode)) ui.warn(`Modo inválido. Opciones: ${MODES.join(', ')}`);
+        else {
+          perms.mode = arg as PermissionMode;
+          ui.notice(`Modo: ${MODE_LABEL[perms.mode]}`);
+        }
+        break;
+      case '/model':
+        if (!arg) ui.notice(`Modelo actual: ${modelId}. Uso: /model <proveedor/modelo>`);
+        else {
+          modelId = arg;
+          ui.notice(`Modelo: ${modelId}`);
+          warnMissingKey();
+        }
+        break;
+      case '/role':
+        if (!ROLES.includes(arg as Role)) ui.warn(`Rol inválido. Opciones: ${ROLES.join(', ')}`);
+        else {
+          modelId = modelFor(config, arg as Role);
+          ui.notice(`Modelo (${arg}): ${modelId}`);
+          warnMissingKey();
+        }
+        break;
+      case '/connect':
+        await guarded(() => handlers.connect(arg || undefined));
+        break;
+      case '/login':
+        await guarded(() => handlers.login(modelId));
+        break;
+      case '/work':
+        if (!arg) await guarded(() => handlers.issues());
+        else await guarded(() => handlers.work(arg));
+        break;
+      case '/issues':
+        await guarded(() => handlers.issues());
+        break;
+      case '/ship':
+        await guarded(() => handlers.ship(arg || undefined));
+        break;
+      default:
+        ui.warn(`Comando desconocido: ${name}. Escribe /help.`);
+    }
+    return true;
+  };
+
+  const guarded = async (fn: () => Promise<void>) => {
+    try {
+      await fn();
+    } catch (e) {
+      ui.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  for (;;) {
+    let line: string;
+    const quit = new AbortController();
+    interrupt.onQuit(() => quit.abort());
+    try {
+      line = (await rl.question(ui.prompt(modeLabel()), { signal: quit.signal })).trim();
+    } catch {
+      break; // stdin cerrado o Ctrl+C repetido
+    } finally {
+      interrupt.onQuit(undefined);
+    }
+    if (!line) continue;
+    if (d.historyFile) await appendHistory(d.historyFile, line);
+    if (line.startsWith('/')) {
+      if (!(await command(line))) break;
+    } else await turn(line);
+  }
+  process.stdin.off('keypress', onKey);
+  ui.notice(c.dim('Hasta pronto.'));
+}

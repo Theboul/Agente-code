@@ -69,6 +69,64 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 - **Piden confirmación por defecto.** Usa `autoApprove` con una lista de herramientas (p. ej. solo las de lectura) o `true` para todas.
 - Si un servidor falla al conectar, se avisa y el resto sigue funcionando. `/mcp` muestra el estado y las herramientas.
 
+## Sesión interactiva
+
+`agente` (sin argumentos) abre una sesión al estilo Claude Code en el proyecto actual: puedes **preguntarle cosas del código**, pedirle **cambios puntuales** o lanzar **el flujo completo** de una issue, todo en la misma conversación.
+
+```
+● Leer(src/math.js)
+  ⎿  Leídas 4 líneas
+● Editar(src/math.js)
+╭─ Editar archivo ────────────────────────────────────────────╮
+│ src/math.js                                                  │
+│ - return a + b;                                              │
+│ + return Number(a) + Number(b);                              │
+│ ¿Quieres aplicar este cambio?                                │
+│ ❯ 1. Sí                                                      │
+│   2. Sí, no volver a preguntar por las ediciones en esta sesión │
+│   3. No, y decirle al agente qué hacer distinto              │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+- **Permisos con opciones:** cada edición, borrado, comando, herramienta MCP o lectura web muestra qué va a hacer, con vista previa del cambio. Elige con ↑↓ y Enter, o pulsa el número. La opción 2 recuerda el permiso **solo durante la sesión** (todas las ediciones, un comando concreto, una herramienta MCP o un dominio); los comandos encadenados, que salen del proyecto o tocan secretos nunca la ofrecen. La opción 3 rechaza y le dice al agente qué hacer distinto: él recibe tu indicación.
+- **Comandos:** `/work <issue>`, `/issues` (eliges con flechas), `/ship [rama]`, `/model`, `/role`, `/mcp`, `/status`, `/clear`, `/help`, `/exit`.
+- **En lenguaje natural:** si le pides resolver una issue completa, el agente puede iniciar el flujo por su cuenta (te lo pregunta antes).
+- **Teclas:** `Esc` o `Ctrl+C` interrumpen al modelo; `Ctrl+C` dos veces en reposo sale. Las decisiones del flujo (aprobar el plan, aceptar el diff, commit, push, PR) usan el mismo selector.
+- Sin terminal interactiva (pipes, CI) los diálogos rechazan por seguridad; usa `--yes` o `--ship`. Los colores se desactivan con `NO_COLOR`.
+
+## El flujo de un día normal
+
+Desde la carpeta de cualquier proyecto git, con el comando corto:
+
+```
+agente                      abre la sesión y espera un prompt o un comando
+/connect jira               (solo la primera vez) conecta tu tracker; vale para todos tus proyectos
+/issues                     lista las pendientes → eliges una con ↑↓ y Enter
+¿Quieres explicar algo más? escribes contexto, restricciones, archivos a tocar… (Enter para seguir)
+Plan                        el agente investiga y propone el plan → apruebas, pides cambios (y lo regenera) o cancelas
+Implementación              rama nueva, código, verificación automática (lint, tipos, tests) con corrección solo
+Revisión                    ves el diff → aceptas, pides cambios o descartas
+Entrega                     "¿commit y push a la rama?" → add, commit (mensaje propuesto) y push
+Pull request                "¿abrir el PR?" → sí o no; si sí, comenta la issue y la mueve de estado
+```
+
+Cada paso es una decisión con opciones; con `Esc` cancelas. Para usarlo en cualquier carpeta: `npm run build && npm link` (deja el comando `agente` en el PATH). La configuración que escribe `/connect` va a `~/.agente/config.json` y se combina con la de cada proyecto (`agente.config.json`, que manda si define lo mismo).
+
+## Primera vez: clave y tracker sin editar JSON
+
+- **`agente` detecta si falta la clave** del modelo y te guía: dónde crearla (Gemini, Claude, OpenAI), te la pide **sin mostrarla** (solo `•`), la **comprueba contra el proveedor** y la guarda en `~/.agente/credentials` (permisos 600, fuera de cualquier repositorio; `AGENTE_HOME` cambia la carpeta). Lo exportado en tu entorno siempre manda. Más tarde: `/login`.
+- **`/connect jira|trello|github`** (o `agente connect jira`): te dice cómo conseguir el token, pide los datos, guarda el token igual que la clave, **prueba la conexión**, separa las herramientas de **lectura** de las de **escritura** (te propone que las de lectura no pregunten; las de escritura siguen preguntando) y escribe la sección `mcpServers` en la configuración **global** (`~/.agente/config.json`) con `${VARIABLE}`, nunca con el secreto: conectas una vez y sirve en todos tus proyectos. Las herramientas quedan disponibles al instante, sin reiniciar.
+- Servidores usados: Jira `@aashari/mcp-server-atlassian-jira` (token de API de Atlassian), Trello `@delorenj/mcp-server-trello` (API Key y token) y GitHub, el servidor MCP remoto oficial (token personal con permiso de Issues y Pull requests). Se descargan con `npx` la primera vez, que puede tardar.
+- **No soportado:** OAuth con navegador (p. ej. el servidor remoto oficial de Atlassian); por eso Jira se conecta con un servidor local y token de API.
+
+## Menos teclas
+
+- **Atajos:** `agente PROJ-123` (también `#45`, una URL o un `.md`) arranca el flujo directo, sin escribir `work`. `agente "explica el módulo de pagos"` abre la sesión con esa pregunta. Si te equivocas en un comando (`agente isues`) te sugiere el correcto.
+- **`/work` sin argumentos** abre la lista de issues (`/issues`).
+- **Modos de permisos con Shift+Tab** (se ve en la regla sobre la entrada y con `/mode`): *preguntar* (diálogo en cada cambio), *aceptar ediciones solas* (editar y crear archivos sin preguntar; borrar, mover y comandos siguen preguntando) y *solo plan* (ningún cambio ni comando; el agente solo investiga y propone). Nunca saltan lo bloqueado por seguridad.
+- **En el plan del flujo** hay una opción "Sí, y aceptar las ediciones solas durante este flujo": vale solo para ese flujo y el modo anterior se restaura al terminar.
+- **Tab** completa comandos (`/mo` → `/mode`), claves de issues tras `/work`, ramas tras `/ship`, modelos tras `/model`, roles y modos. **↑** recupera lo que escribiste, también de sesiones anteriores (`~/.agente/history`, solo legible por ti; cambia la carpeta con `AGENTE_HOME`).
+
 ## Flujo `agente work`
 
 Es el mismo flujo que usan los demás arneses de código:
