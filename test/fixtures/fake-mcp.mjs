@@ -9,4 +9,5 @@ server.registerTool('list_issues', { description: 'Lista issues', inputSchema: {
 server.registerTool('add_comment', { description: 'Comenta', inputSchema: { key: z.string(), body: z.string() } }, async ({ key }) => ({
   content: [{ type: 'text', text: `comentado ${key}` }],
 }));
+if (process.env.FAKE_STDERR) console.error(process.env.FAKE_STDERR);
 await server.connect(new StdioServerTransport());

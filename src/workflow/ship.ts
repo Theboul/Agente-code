@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config } from '../config.js';
-import { agentDir, git, gitOk, pushBranch, remoteUrl } from '../git.js';
+import { agentDir, git, gitOk, pushBranch, remoteUrl, resolvePrBase } from '../git.js';
 import type { Issue } from './issue.js';
 import type { PrCreator } from './pr.js';
 import { loadPrompt } from './prompts.js';
@@ -192,6 +192,9 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
 
   // ── 3. PULL REQUEST ─────────────────────────────────────────────────────────
   io.say('\n━━ Entrega 3/4 · Pull request ━━');
+  const target = await resolvePrBase(workdir, wf.remote, base);
+  const prBase = target.base;
+  if (target.replaced) io.say(`⚠ La base "${target.replaced}" no existe en ${wf.remote}; el PR irá contra "${prBase}".`);
   const stat = await gitOk(workdir, ['diff', '--stat', `${base}...HEAD`]).catch(() => '');
   const template = [join(workdir, '.github', 'pull_request_template.md'), join(workdir, 'pull_request_template.md')].find(existsSync);
   const bodyReply = await o.runStage({
@@ -214,10 +217,10 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
   // Con clave de tracker: "PROJ-1: título". Sin clave (texto libre) el título de la tarea puede ser un párrafo: se usa el asunto del commit.
   const title = issue.key ? prTitle(issue) : await gitOk(workdir, ['log', '-1', '--format=%s']);
   io.say(`\nTítulo: ${title}\n\n${body}`);
-  const prGo = await ask(`\n¿Abrir el PR contra ${base}?  [a]sí · [x] omitir: `, {
+  const prGo = await ask(`\n¿Abrir el PR contra ${prBase}?  [a]sí · [x] omitir: `, {
     title: 'Pull request',
     detail: [title],
-    approve: `Sí, abrir el PR contra ${base}`,
+    approve: `Sí, abrir el PR contra ${prBase}`,
     cancel: 'No, omitir (la rama ya está subida)',
   });
   if (prGo.kind !== 'approve') {
@@ -225,7 +228,7 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
     await record(o, result);
     return result;
   }
-  const pr = await o.createPr({ root: o.root, workdir, remoteUrl: url, base, branch, title, body, draft: o.draft ?? wf.pr.draft });
+  const pr = await o.createPr({ root: o.root, workdir, remoteUrl: url, base: prBase, branch, title, body, draft: o.draft ?? wf.pr.draft });
   if (pr.url) {
     result.prUrl = pr.url;
     io.say(`✓ PR (${pr.method}): ${pr.url}`);
@@ -245,6 +248,7 @@ export async function ship(o: ShipOptions): Promise<ShipResult> {
         role: 'light',
         system: 'Actualizas un gestor de tareas con herramientas MCP. Sé breve.',
         tools: 'mcp',
+        server: wf.tracker,
         workdir,
         messages: [
           {

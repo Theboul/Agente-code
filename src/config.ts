@@ -24,6 +24,10 @@ export const McpServerSchema = z
     headers: z.record(z.string(), z.string()).default({}),
     /** Herramientas que se ejecutan sin preguntar: lista de nombres originales, o true para todas. */
     autoApprove: z.union([z.boolean(), z.array(z.string())]).default([]),
+    /** Solo estas herramientas (nombres originales) se exponen al modelo. Menos herramientas = menos tokens por turno. Sin definir: todas. */
+    includeTools: z.array(z.string()).optional(),
+    /** Herramientas que no se exponen al modelo (se aplica tras includeTools). */
+    excludeTools: z.array(z.string()).optional(),
     enabled: z.boolean().default(true),
   })
   .refine((s) => Boolean(s.command) !== Boolean(s.url), { message: 'Define "command" (stdio) o "url" (remoto), no ambos.' });
@@ -60,6 +64,8 @@ const WorkflowConfig = z.object({
   sync: z.boolean().default(true),
   /** Estado al que mover la issue tras el PR, p. ej. "In Review". Vacío = solo comentar. */
   syncStatus: z.string().optional(),
+  /** Servidor MCP del tracker de issues (p. ej. "jira"). Con varios servidores conectados (Jira + GitHub), evita que el modelo consulte el equivocado. Sin definir: todos. */
+  tracker: z.string().optional(),
   /** Qué issues listar con `agente issues` (lenguaje natural, se lo pasa al modelo). */
   issueQuery: z.string().default('abiertas, sin asignar o asignadas a mí, las más recientes primero'),
 });

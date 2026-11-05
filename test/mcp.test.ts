@@ -1,7 +1,10 @@
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { McpServerConfig } from '../src/config.js';
-import { cleanEnv, connectMcpServers, expandEnv, type McpConnections, needsApproval, toolName } from '../src/mcp/client.js';
+import { cleanEnv, connectMcpServers, expandEnv, isToolExposed, type McpConnections, needsApproval, toolName, toolsOfServer } from '../src/mcp/client.js';
 import type { Permissions } from '../src/permissions.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-mcp.mjs', import.meta.url));
@@ -31,6 +34,20 @@ describe('utilidades MCP', () => {
     expect(toolName('my server', 'do.it')).toBe('mcp__my_server__do_it');
     expect(toolName('s', 'x'.repeat(100))).toHaveLength(64);
   });
+  it('separa las herramientas por servidor', () => {
+    const t = { mcp__jira__jira_get: {}, mcp__jira__jira_post: {}, mcp__github__list_issues: {}, mcp__jira2__x: {} } as never;
+    expect(Object.keys(toolsOfServer(t, 'jira')).sort()).toEqual(['mcp__jira__jira_get', 'mcp__jira__jira_post']);
+    expect(Object.keys(toolsOfServer(t, 'github'))).toEqual(['mcp__github__list_issues']);
+    expect(Object.keys(toolsOfServer(t, 'nada'))).toEqual([]);
+    expect(toolsOfServer(t)).toBe(t); // sin servidor: todas
+  });
+  it('filtra las herramientas expuestas al modelo', () => {
+    expect(isToolExposed(base, 'x')).toBe(true); // sin filtros: todas, como siempre
+    expect(isToolExposed({ ...base, includeTools: ['a'] }, 'a')).toBe(true);
+    expect(isToolExposed({ ...base, includeTools: ['a'] }, 'b')).toBe(false);
+    expect(isToolExposed({ ...base, excludeTools: ['b'] }, 'b')).toBe(false);
+    expect(isToolExposed({ ...base, includeTools: ['a', 'b'], excludeTools: ['b'] }, 'b')).toBe(false);
+  });
   it('decide aprobación', () => {
     expect(needsApproval({ ...base, autoApprove: true }, 'x')).toBe(false);
     expect(needsApproval(base, 'list_issues')).toBe(false);
@@ -57,6 +74,44 @@ describe('servidor MCP real por stdio', () => {
     const denied = await conn.tools.mcp__tracker__add_comment!.execute!({ key: 'PROJ-1', body: 'hola' } as never, opts);
     expect(denied).toBe('DENEGADO por el usuario.');
     expect(asked).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('includeTools con un servidor real', () => {
+  it('solo conecta al modelo las herramientas permitidas', async () => {
+    const conn = await connectMcpServers({ t: { ...base, includeTools: ['list_issues'] } }, perms(false), 10_000);
+    try {
+      expect(Object.keys(conn.tools)).toEqual(['mcp__t__list_issues']);
+      expect(conn.status[0]?.tools).toEqual(['mcp__t__list_issues']);
+    } finally {
+      await conn.close();
+    }
+  }, 30_000);
+});
+
+describe('stderr de los servidores MCP locales', () => {
+  it('va a un log en AGENTE_HOME/logs y el error de conexión lo menciona', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'mcp-home-'));
+    const previous = process.env.AGENTE_HOME;
+    process.env.AGENTE_HOME = home;
+    let conn: McpConnections | undefined;
+    try {
+      conn = await connectMcpServers(
+        { ruidoso: { ...base, env: { FAKE_STDERR: 'LOG-DEL-SERVIDOR' } }, roto: { ...base, args: ['/no/existe.mjs'] } },
+        perms(false),
+        10_000,
+      );
+      expect(conn.status.find((s) => s.name === 'ruidoso')).toMatchObject({ ok: true });
+      const roto = conn.status.find((s) => s.name === 'roto');
+      expect(roto?.ok).toBe(false);
+      expect(roto?.error).toContain(join(home, 'logs', 'mcp-roto.log'));
+      await conn.close();
+      expect(readFileSync(join(home, 'logs', 'mcp-ruidoso.log'), 'utf8')).toContain('LOG-DEL-SERVIDOR');
+    } finally {
+      await conn?.close();
+      if (previous === undefined) delete process.env.AGENTE_HOME;
+      else process.env.AGENTE_HOME = previous;
+    }
   }, 30_000);
 });
 

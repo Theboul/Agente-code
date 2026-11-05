@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { agentDir, compareUrl, exec } from '../git.js';
+import { agentDir, compareUrl, exec, type GitResult } from '../git.js';
 import { extractJson } from './issue.js';
 import type { StageRunner } from './run.js';
 
@@ -36,12 +36,19 @@ export async function ghReady(cwd: string): Promise<boolean> {
   return (await exec('gh', ['auth', 'status'], cwd)).code === 0;
 }
 
-type PrOptions = { method: PrMethod; runStage: StageRunner; mcpToolNames: string[]; ghReady?: (cwd: string) => Promise<boolean> };
+type PrOptions = {
+  method: PrMethod;
+  runStage: StageRunner;
+  mcpToolNames: string[];
+  ghReady?: (cwd: string) => Promise<boolean>;
+  /** Ejecuta `gh <args>`. Por defecto el programa real; los tests lo sustituyen para no depender de gh ni de la red. */
+  runGh?: (args: string[], cwd: string) => Promise<GitResult>;
+};
 
-async function createWithGh(req: PrRequest, bodyFile: string): Promise<PrOutcome> {
+async function createWithGh(req: PrRequest, bodyFile: string, runGh: NonNullable<PrOptions['runGh']>): Promise<PrOutcome> {
   const args = ['pr', 'create', '--base', req.base, '--head', req.branch, '--title', req.title, '--body-file', bodyFile];
   if (req.draft) args.push('--draft');
-  const r = await exec('gh', args, req.workdir);
+  const r = await runGh(args, req.workdir);
   if (r.code !== 0) throw new Error(`gh pr create falló: ${(r.stderr || r.stdout).trim()}`);
   return { method: 'gh', url: r.stdout.trim().split('\n').pop()!.trim(), bodyFile };
 }
@@ -97,7 +104,8 @@ export function makePrCreator(o: PrOptions): PrCreator {
     const failures: string[] = [];
     for (const method of order) {
       try {
-        const outcome = method === 'gh' ? await createWithGh(req, bodyFile) : await createWithMcp(o, req, bodyFile);
+        const outcome =
+          method === 'gh' ? await createWithGh(req, bodyFile, o.runGh ?? ((args, cwd) => exec('gh', args, cwd))) : await createWithMcp(o, req, bodyFile);
         return failures.length ? { ...outcome, note: `Antes falló (${failures.join('; ')}).` } : outcome;
       } catch (e) {
         if (o.method !== 'auto') throw e;

@@ -67,7 +67,8 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 - Los valores admiten `${VARIABLE}` del entorno, así los tokens no se guardan en el archivo. Los procesos stdio no heredan tus claves de modelos, solo lo que pongas en `env`.
 - Las herramientas llegan al modelo como `mcp__<servidor>__<herramienta>`.
 - **Piden confirmación por defecto.** Usa `autoApprove` con una lista de herramientas (p. ej. solo las de lectura) o `true` para todas.
-- Si un servidor falla al conectar, se avisa y el resto sigue funcionando. `/mcp` muestra el estado y las herramientas.
+- **Menos herramientas, menos tokens.** Cada herramienta que se expone ocupa tokens en todos los turnos (y los modelos gratuitos tienen un tope por minuto). `includeTools` deja solo las que listes (nombres originales del servidor) y `excludeTools` quita las que no quieras. Sin ninguna de las dos, se exponen todas.
+- Si un servidor falla al conectar, se avisa y el resto sigue funcionando. `/mcp` muestra el estado y las herramientas. Lo que el servidor escribe por stderr no sale por pantalla: va a `~/.agente/logs/mcp-<servidor>.log`.
 
 ## Sesión interactiva
 
@@ -89,7 +90,8 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 ```
 
 - **Permisos con opciones:** cada edición, borrado, comando, herramienta MCP o lectura web muestra qué va a hacer, con vista previa del cambio. Elige con ↑↓ y Enter, o pulsa el número. La opción 2 recuerda el permiso **solo durante la sesión** (todas las ediciones, un comando concreto, una herramienta MCP o un dominio); los comandos encadenados, que salen del proyecto o tocan secretos nunca la ofrecen. La opción 3 rechaza y le dice al agente qué hacer distinto: él recibe tu indicación.
-- **Comandos:** `/work <issue>`, `/issues` (eliges con flechas), `/ship [rama]`, `/model`, `/role`, `/mcp`, `/status`, `/clear`, `/help`, `/exit`.
+- **Comandos:** `/work <issue>`, `/issues` (eliges con flechas), `/ship [rama]`, `/model`, `/role`, `/mcp`, `/status`, `/clear`, `/sessions`, `/resume [id]`, `/help`, `/exit`.
+- **Sesiones guardadas:** cada conversación se guarda tras cada turno (en `.git/agente/sessions`, así no ensucia el árbol de trabajo; fuera de un repo, en `~/.agente/sessions`) y se conservan las 30 últimas por proyecto. `agente sessions` las lista, `agente -c` retoma la más reciente y `agente --resume <id>` una concreta (basta el principio del id). Dentro del chat: `/sessions` y `/resume [id]`. `/clear` empieza una conversación nueva y deja la anterior guardada. Al retomar, el contexto vuelve tal como estaba (ya compactado si lo estaba). Con `-p` no se guarda, salvo que retomes una sesión.
 - **En lenguaje natural:** si le pides resolver una issue completa, el agente puede iniciar el flujo por su cuenta (te lo pregunta antes).
 - **Teclas:** `Esc` o `Ctrl+C` interrumpen al modelo; `Ctrl+C` dos veces en reposo sale. Las decisiones del flujo (aprobar el plan, aceptar el diff, commit, push, PR) usan el mismo selector.
 - Sin terminal interactiva (pipes, CI) los diálogos rechazan por seguridad; usa `--yes` o `--ship`. Los colores se desactivan con `NO_COLOR`.
@@ -147,7 +149,7 @@ La issue puede ser `PROJ-123`, `#45` o una URL (la lee el modelo vía MCP), un a
 ### Personalizar
 
 - `agente init` crea `agente.config.json` y copia los prompts de cada etapa a `.agente/prompts/*.md` (`plan`, `implement`, `fix`, `issue-fetch`, `issue-list`). Edítalos y versiónalos con el repo; variables: `{{issue.key}}`, `{{issue.title}}`, `{{issue.body}}`, `{{plan}}`, `{{branch}}`, `{{verify.command}}`, `{{verify.output}}`.
-- `workflow` en la config: `branchPrefix`, `isolation`, `worktreeDir`, `setup`, `verify` (tus propios comandos; `[]` desactiva), `maxFixAttempts`, `issueQuery`.
+- `workflow` en la config: `branchPrefix`, `isolation`, `worktreeDir`, `setup`, `verify` (tus propios comandos; `[]` desactiva), `maxFixAttempts`, `issueQuery`, `tracker` (nombre del servidor MCP de tus issues, p. ej. `"jira"`: con Jira y GitHub conectados a la vez, `agente issues` y la sincronización solo usan ese servidor; el PR sigue usando el de GitHub).
 - Un modelo distinto por etapa con `roles` (`plan` / `implement` / `light`).
 
 ## Entrega: `agente ship`

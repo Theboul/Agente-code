@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { compareUrl, parseRemote, pushBranch } from '../src/git.js';
+import { compareUrl, parseRemote, pushBranch, resolvePrBase } from '../src/git.js';
 import { hasMcpPrTool, makePrCreator, type PrCreator } from '../src/workflow/pr.js';
 import type { StageRunner } from '../src/workflow/run.js';
 import { findRun, saveRun } from '../src/workflow/runs.js';
@@ -34,6 +34,9 @@ const scripted = (answers: string[] = []) => {
   const log: string[] = [];
   return { log, io: { say: (m: string) => void log.push(m), ask: async () => answers.shift() ?? 'a' } };
 };
+
+/** `gh pr create` que falla, sin ejecutar gh de verdad (en Windows CI tardaba más que el límite del test). */
+const ghFalla = async () => ({ code: 1, stdout: '', stderr: 'no git remotes found' });
 
 const MSG_CON_COAUTOR = 'feat: añade nuevo\n\nDetalle.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nClaude-Session: https://x/y';
 
@@ -106,18 +109,28 @@ describe('sanitizado y utilidades', () => {
   it('en modo auto, si gh falla pasa a la herramienta MCP y, si también falla, al enlace manual con el motivo', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-fb-'));
     sh(dir, 'init', '-q');
-    // gh "autenticado" pero sin remoto de GitHub en este repo: gh pr create falla de verdad.
+    // gh "autenticado" pero `gh pr create` falla (simulado: no depende de tener gh ni red, y no tarda).
     const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 't', body: 'cuerpo', draft: false };
     const mcpOk: StageRunner = async () => ({ text: '```json\n{"url":"https://github.com/o/r/pull/11"}\n```', newMessages: [] });
     const mcpFalla: StageRunner = async () => ({ text: 'sin url', newMessages: [] });
 
-    const viaMcp = await makePrCreator({ method: 'auto', runStage: mcpOk, mcpToolNames: ['mcp__github__create_pull_request'], ghReady: async () => true })(req);
+    const viaMcp = await makePrCreator({
+      method: 'auto',
+      runStage: mcpOk,
+      mcpToolNames: ['mcp__github__create_pull_request'],
+      ghReady: async () => true,
+      runGh: ghFalla,
+    })(req);
     expect(viaMcp).toMatchObject({ method: 'mcp', url: 'https://github.com/o/r/pull/11' });
     expect(viaMcp.note).toMatch(/gh/);
 
-    const manual = await makePrCreator({ method: 'auto', runStage: mcpFalla, mcpToolNames: ['mcp__github__create_pull_request'], ghReady: async () => true })(
-      req,
-    );
+    const manual = await makePrCreator({
+      method: 'auto',
+      runStage: mcpFalla,
+      mcpToolNames: ['mcp__github__create_pull_request'],
+      ghReady: async () => true,
+      runGh: ghFalla,
+    })(req);
     expect(manual.method).toBe('manual');
     expect(manual.manualUrl).toContain('github.com/o/r/compare');
     expect(manual.note).toMatch(/gh.*mcp/s);
@@ -127,9 +140,23 @@ describe('sanitizado y utilidades', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-ex-'));
     sh(dir, 'init', '-q');
     const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 't', body: 'b', draft: false };
-    await expect(makePrCreator({ method: 'gh', runStage: async () => ({ text: '', newMessages: [] }), mcpToolNames: [] })(req)).rejects.toThrow(
+    await expect(makePrCreator({ method: 'gh', runStage: async () => ({ text: '', newMessages: [] }), mcpToolNames: [], runGh: ghFalla })(req)).rejects.toThrow(
       /gh pr create falló/,
     );
+  });
+  it('con gh se pasan la base, la rama y --draft, y se devuelve la URL', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-gh-'));
+    sh(dir, 'init', '-q');
+    const req = { root: dir, workdir: dir, remoteUrl: 'git@github.com:o/r.git', base: 'main', branch: 'f/x', title: 'T', body: 'b', draft: true };
+    const calls: string[][] = [];
+    const out = await makePrCreator({
+      method: 'gh',
+      runStage: async () => ({ text: '', newMessages: [] }),
+      mcpToolNames: [],
+      runGh: async (args) => (calls.push(args), { code: 0, stdout: 'aviso\nhttps://github.com/o/r/pull/5\n', stderr: '' }),
+    })(req);
+    expect(out).toMatchObject({ method: 'gh', url: 'https://github.com/o/r/pull/5' });
+    expect(calls[0]).toEqual(expect.arrayContaining(['pr', 'create', '--base', 'main', '--head', 'f/x', '--title', 'T', '--draft']));
   });
 });
 
@@ -263,5 +290,56 @@ describe('entrega: commit → push → PR → tracker', () => {
     const io = { say: (m: string) => void log.push(m), ask: async () => 'a', choose: async () => ({ kind: 'approve' as const }) };
     await ship({ ...base(dir), config: await loadConfig(dir), io, runStage: fakeStage(), pushConfirmed: true, createPr: async () => ({ method: 'manual' }) });
     expect(log.join('\n')).not.toContain('Mensaje de commit');
+  });
+});
+
+describe('base del PR', () => {
+  it('si la base pedida no existe en el remoto, usa la rama por defecto del remoto', async () => {
+    const { dir } = setup();
+    sh(dir, 'branch', 'add-changelog', 'main'); // solo local: nunca se sube
+    expect(await resolvePrBase(dir, 'origin', 'add-changelog')).toEqual({ base: 'main', replaced: 'add-changelog' });
+  });
+  it('si la base existe en el remoto, no se toca', async () => {
+    const { dir } = setup();
+    expect(await resolvePrBase(dir, 'origin', 'main')).toEqual({ base: 'main' });
+  });
+  it('si el remoto no responde, respeta la base pedida', async () => {
+    const { dir } = setup();
+    sh(dir, 'remote', 'set-url', 'origin', '/no/existe/repo.git');
+    expect(await resolvePrBase(dir, 'origin', 'add-changelog')).toEqual({ base: 'add-changelog' });
+  });
+  it('workflow.tracker limita la sincronización a las herramientas de ese servidor', async () => {
+    const run = async (tracker?: string) => {
+      const { dir } = setup();
+      const config = await loadConfig(dir);
+      const servers: (string | undefined)[] = [];
+      const stage = fakeStage();
+      await ship({
+        ...base(dir),
+        config: { ...config, workflow: { ...config.workflow, tracker } },
+        io: scripted().io,
+        runStage: async (a) => (a.tools === 'mcp' && servers.push(a.server), stage(a)),
+        createPr: async () => ({ method: 'gh', url: 'https://github.com/o/r/pull/7' }),
+      });
+      return servers;
+    };
+    expect(await run('jira')).toEqual(['jira']);
+    expect(await run()).toEqual([undefined]); // sin configurar, igual que antes: todas las herramientas
+  });
+  it('ship abre el PR contra la rama válida y avisa del cambio', async () => {
+    const { dir } = setup();
+    sh(dir, 'branch', 'add-changelog', 'main');
+    const prs: Parameters<PrCreator>[0][] = [];
+    const { io, log } = scripted();
+    await ship({
+      ...base(dir),
+      base: 'add-changelog',
+      config: await loadConfig(dir),
+      io,
+      runStage: fakeStage(),
+      createPr: async (req) => (prs.push(req), { method: 'gh', url: 'https://github.com/o/r/pull/7' }),
+    });
+    expect(prs[0]?.base).toBe('main');
+    expect(log.join(' ')).toContain('"add-changelog" no existe en origin');
   });
 });

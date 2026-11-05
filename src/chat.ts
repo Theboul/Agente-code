@@ -7,6 +7,7 @@ import { currentBranch } from './git.js';
 import type { McpConnections } from './mcp/client.js';
 import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type PermissionMode, type Permissions } from './permissions.js';
 import { missingKeyHint } from './providers.js';
+import { formatWhen, listSessions, loadSession, newSessionId, pruneSessions, type SessionRecord, saveSession, sessionTitle } from './session.js';
 import { nativeTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c } from './ui/ansi.js';
@@ -44,6 +45,10 @@ export interface ChatDeps {
   completion: CompletionState;
   /** Archivo donde se guarda el historial de lo escrito (flecha arriba entre sesiones). */
   historyFile?: string;
+  /** Carpeta donde se guarda la conversación tras cada turno. Sin ella, la sesión no se guarda. */
+  sessionDir?: string;
+  /** Sesión anterior que se retoma (--continue / --resume). */
+  resume?: SessionRecord;
   handlers: ChatHandlers;
 }
 
@@ -58,7 +63,9 @@ const COMMANDS: [string, string][] = [
   ['/role <plan|implement|light>', 'Usa el modelo configurado para un rol'],
   ['/mcp', 'Estado y herramientas de los servidores MCP'],
   ['/status', 'Modelo, carpeta, rama y tamaño del historial'],
-  ['/clear', 'Borra el historial de la conversación'],
+  ['/clear', 'Borra el historial de la conversación (la anterior queda guardada)'],
+  ['/sessions', 'Conversaciones guardadas de este proyecto'],
+  ['/resume [id]', 'Retoma una conversación guardada (sin id, la más reciente)'],
   ['/help', 'Esta ayuda'],
   ['/exit', 'Salir'],
 ];
@@ -104,13 +111,41 @@ export async function runChat(d: ChatDeps): Promise<void> {
   };
   // Se arma en cada turno: así las herramientas de un tracker recién conectado (/connect) están disponibles al instante.
   const currentTools = (): ToolSet => ({ ...mcp.tools, ...local });
-  let history: ModelMessage[] = [];
+  let history: ModelMessage[] = d.resume?.messages ?? [];
+  let sessionId = d.resume?.id ?? newSessionId();
+  let sessionStart = d.resume?.createdAt ?? new Date().toISOString();
+  let saveFailed = false;
+  let pruned = false;
+
+  /** Guarda la conversación tras cada turno. Un fallo al guardar nunca interrumpe el chat: se avisa una vez. */
+  const persist = async () => {
+    if (!d.sessionDir || !history.length) return;
+    try {
+      await saveSession(d.sessionDir, {
+        id: sessionId,
+        cwd,
+        title: sessionTitle(history),
+        model: modelId,
+        createdAt: sessionStart,
+        updatedAt: new Date().toISOString(),
+        messages: history,
+      });
+      if (!pruned) {
+        pruned = true;
+        await pruneSessions(d.sessionDir);
+      }
+    } catch (e) {
+      if (!saveFailed) ui.warn(`No se pudo guardar la sesión: ${e instanceof Error ? e.message : e}`);
+      saveFailed = true;
+    }
+  };
 
   const turn = async (input: string) => {
     history.push({ role: 'user', content: input });
     try {
       const { newMessages } = await modelTurn({ config, ui, interrupt }, { modelId, system, tools: currentTools(), messages: history });
       history.push(...newMessages);
+      await persist();
     } catch (e) {
       history.pop();
       const aborted = e instanceof Error && e.message.startsWith('Interrumpido');
@@ -125,6 +160,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
   const branch = await currentBranch(cwd).catch(() => undefined);
   ui.banner({ model: modelId, cwd, branch, mcp: Object.keys(mcp.tools).length || undefined });
   if (!mcp.status.some((x) => x.ok)) ui.notice('Sin tracker conectado: /connect jira|trello|github');
+  if (d.resume) ui.notice(`↻ Sesión retomada: «${d.resume.title}» (${d.resume.messages.length} mensajes, ${formatWhen(d.resume.updatedAt)})`);
   const modeLabel = () => `modo: ${MODE_LABEL[perms.mode ?? 'ask']} · Shift+Tab cambia`;
   d.completion.suppress = false;
 
@@ -167,14 +203,46 @@ export async function runChat(d: ChatDeps): Promise<void> {
         break;
       case '/clear':
         history = [];
+        sessionId = newSessionId(); // la conversación anterior queda guardada; esta empieza aparte
+        sessionStart = new Date().toISOString();
+        pruned = false;
         ui.notice('Historial limpiado.');
         break;
+      case '/sessions': {
+        const dir = d.sessionDir;
+        const list = dir ? await listSessions(dir) : [];
+        if (!dir) ui.notice('Las sesiones no se guardan en este modo.');
+        else if (!list.length) ui.notice('Todavía no hay sesiones guardadas en este proyecto.');
+        else {
+          ui.table(
+            list
+              .slice(0, 15)
+              .map((s): [string, string] => [`${s.id === sessionId ? '● ' : '  '}${s.id}`, `${formatWhen(s.updatedAt)} · ${s.messages} msj · ${s.title}`]),
+          );
+          ui.notice(c.dim('Retoma una con /resume <id> (basta el principio del id).'));
+        }
+        break;
+      }
+      case '/resume': {
+        const dir = d.sessionDir;
+        if (!dir) ui.notice('Las sesiones no se guardan en este modo.');
+        else
+          await guarded(async () => {
+            const rec = await loadSession(dir, arg || 'last', sessionId);
+            history = rec.messages;
+            sessionId = rec.id;
+            sessionStart = rec.createdAt;
+            pruned = false;
+            ui.notice(`↻ Sesión retomada: «${rec.title}» (${rec.messages.length} mensajes, ${formatWhen(rec.updatedAt)})`);
+          });
+        break;
+      }
       case '/mcp':
         printMcp();
         break;
       case '/status':
         ui.notice(
-          `modelo: ${modelId}\nmodo: ${MODE_LABEL[perms.mode ?? 'ask']}\ncarpeta: ${cwd}${branch ? ` (${branch})` : ''}\nhistorial: ${history.length} mensajes`,
+          `modelo: ${modelId}\nmodo: ${MODE_LABEL[perms.mode ?? 'ask']}\ncarpeta: ${cwd}${branch ? ` (${branch})` : ''}\nhistorial: ${history.length} mensajes${d.sessionDir ? `\nsesión: ${sessionId}` : ''}`,
         );
         break;
       case '/mode':
