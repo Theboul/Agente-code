@@ -14,6 +14,7 @@ import { parseInvocation } from './invocation.js';
 import { connectMcpServers, type McpConnections, toolsOfServer } from './mcp/client.js';
 import { MODES, type Permissions } from './permissions.js';
 import { missingKeyHint, PROVIDER_HELP } from './providers.js';
+import { formatWhen, listSessions, loadSession, sessionsDir } from './session.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c, termWidth, truncate } from './ui/ansi.js';
@@ -44,12 +45,15 @@ Uso:
   agente issues                  Lista issues del tracker (MCP), eliges una y sigue el flujo
   agente connect [jira|trello|github]   Conecta tu tracker paso a paso
   agente login                   Pega la clave de tu proveedor de modelos
+  agente sessions                Lista las conversaciones guardadas de este proyecto
   agente init                    Crea agente.config.json y .agente/prompts/ para personalizar
 
 Opciones:
   -m, --model <prov/modelo>   Usa este modelo en todas las etapas (ej. google/gemini-3.5-flash-lite)
   -r, --role <rol>            (chat) modelo del rol: ${ROLES.join(' | ')}
   -p, --prompt <texto>        (chat) un solo turno y salir
+  -c, --continue              (chat) retoma la conversación más reciente de este proyecto
+      --resume <id>           (chat) retoma una conversación concreta (ver: agente sessions)
       --base <rama>           (work) rama base; por defecto la actual
       --worktree              (work) trabajar en un worktree aislado en vez de una rama en el repo
       --no-verify             (work) omitir la verificación automática
@@ -58,7 +62,7 @@ Opciones:
   -y, --yes                   Aprobar planes y ediciones sin preguntar (los comandos fuera de allowedCommands siguen pidiendo confirmación)
   -h, --help
 
-Dentro de la sesión: /work, /issues, /ship, /connect, /login, /mode, /model, /role, /mcp, /status, /clear, /help, /exit
+Dentro de la sesión: /work, /issues, /ship, /connect, /login, /mode, /model, /role, /mcp, /status, /clear, /sessions, /resume, /help, /exit
   Tab completa comandos, issues y ramas · Shift+Tab cambia el modo de permisos · ↑ recupera lo escrito
 Configuración: agente.config.json (ver README).`;
 
@@ -70,6 +74,8 @@ const { values, positionals } = parseArgs({
     model: { type: 'string', short: 'm' },
     role: { type: 'string', short: 'r' },
     prompt: { type: 'string', short: 'p' },
+    continue: { type: 'boolean', short: 'c' },
+    resume: { type: 'string' },
     base: { type: 'string' },
     worktree: { type: 'boolean' },
     'no-verify': { type: 'boolean' },
@@ -80,7 +86,7 @@ const { values, positionals } = parseArgs({
   },
 });
 
-const SLASH_COMMANDS = ['/work', '/issues', '/ship', '/mode', '/model', '/role', '/mcp', '/status', '/clear', '/help', '/exit'];
+const SLASH_COMMANDS = ['/work', '/issues', '/ship', '/mode', '/model', '/role', '/mcp', '/status', '/clear', '/sessions', '/resume', '/help', '/exit'];
 
 /** Ramas locales creadas por el flujo (con el prefijo configurado), para completar `/ship <Tab>`. */
 async function localBranches(root: string, prefix: string): Promise<string[]> {
@@ -102,6 +108,7 @@ async function main() {
   }
   const cmd = inv.cmd;
   if (cmd === 'init') return init(cwd);
+  if (cmd === 'sessions') return printSessions(cwd);
 
   const config = await loadConfig(cwd);
   const root = (await repoRoot(cwd)) ?? cwd;
@@ -162,7 +169,13 @@ async function main() {
   try {
     if (['chat', 'work', 'issues', 'ship'].includes(cmd) && values.prompt === undefined) await ensureKeys(ctx);
     if (cmd === 'chat') {
+      // Las sesiones se guardan en el chat interactivo; con -p solo si se retoma una (para seguir la conversación).
+      const wantsResume = values.continue || values.resume !== undefined;
+      const sessionDir = values.prompt === undefined || wantsResume ? await sessionsDir(cwd) : undefined;
+      const resume = wantsResume && sessionDir ? await loadSession(sessionDir, values.resume ?? 'last') : undefined;
       await runChat({
+        sessionDir,
+        resume,
         cwd,
         config,
         perms,
@@ -197,6 +210,15 @@ async function main() {
     rl.close();
     await mcp.close();
   }
+}
+
+/** `agente sessions`: conversaciones guardadas de este proyecto, la más reciente primero. */
+async function printSessions(cwd: string) {
+  const list = await listSessions(await sessionsDir(cwd));
+  if (!list.length) return console.log('Todavía no hay conversaciones guardadas en este proyecto.');
+  const w = Math.max(...list.map((s) => s.id.length)) + 2;
+  for (const s of list) console.log(`${c.cyan(s.id.padEnd(w))}${formatWhen(s.updatedAt)} · ${String(s.messages).padStart(3)} msj · ${s.title}`);
+  console.log(dim('\nRetoma la última con `agente -c` o una concreta con `agente --resume <id>` (basta el principio del id).'));
 }
 
 /** Pone a disposición de /connect y /login todo lo que necesitan de la sesión. */
