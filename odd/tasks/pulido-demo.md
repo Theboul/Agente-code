@@ -28,4 +28,7 @@ TDD: no configurado de forma explícita; se escribieron tests junto con cada cam
 ## Pendiente (no hecho)
 - Prueba real contra GitHub/Jira con el flujo nuevo (la hace el usuario).
 - Subagentes (`delegar` de solo lectura), test frágil de timeout de bash, reintento de la ruta MCP del PR.
-- Revisión nativa (RDD): no ejecutada en estos commits.
+- Sugerencias de la revisión (no bloqueantes, para más adelante): `cleanName` duplicado en `src/mcp/client.ts` (líneas 82-83), el `catch` silencioso de `src/session.ts` (80-84) y la separación entre `base` y `prBase` en `src/workflow/ship.ts` (195-198).
+
+## Revisión nativa
+Riesgo alto (15 archivos, 634 líneas; evidencia: `src/cli.ts` inicia procesos). Cuatro lentes (riesgo, resiliencia, legibilidad, fiabilidad): aprobada, sin hallazgos bloqueantes, tres avisos no bloqueantes arriba. Reconocida y autoridad quemada (lineage `review-e6929a083927aa9f`).
