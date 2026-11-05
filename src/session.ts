@@ -109,4 +109,9 @@ export async function pruneSessions(dir: string, keep = KEEP_SESSIONS): Promise<
   await Promise.all(all.slice(keep).map((r) => rm(fileOf(dir, r.id), { force: true })));
 }
 
-export const formatWhen = (iso: string): string => iso.slice(0, 16).replace('T', ' ');
+/** Fecha en hora local (el id de la sesión también está en hora local). */
+export function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
