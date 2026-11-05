@@ -39,6 +39,12 @@ export function toolName(server: string, tool: string): string {
   return `mcp__${clean(server)}__${clean(tool)}`.slice(0, 64);
 }
 
+/** ¿Se expone esta herramienta al modelo? includeTools (si existe) manda; excludeTools quita después. */
+export function isToolExposed(cfg: McpServerConfig, originalTool: string): boolean {
+  if (cfg.includeTools && !cfg.includeTools.includes(originalTool)) return false;
+  return !cfg.excludeTools?.includes(originalTool);
+}
+
 export function needsApproval(cfg: McpServerConfig, originalTool: string): boolean {
   if (cfg.autoApprove === true) return false;
   return !(Array.isArray(cfg.autoApprove) && cfg.autoApprove.includes(originalTool));
@@ -97,7 +103,7 @@ async function connectOne(name: string, cfg: McpServerConfig, perms: Permissions
     for (const [original, t] of Object.entries(raw)) {
       const exposed = toolName(name, original);
       const exec = t.execute;
-      if (!exec) continue;
+      if (!exec || !isToolExposed(cfg, original)) continue;
       tools[exposed] = {
         ...t,
         execute: async (input: never, options: never) => {

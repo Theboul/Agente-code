@@ -67,7 +67,8 @@ Declara servidores en `mcpServers` (ver `agente.config.example.json`):
 - Los valores admiten `${VARIABLE}` del entorno, así los tokens no se guardan en el archivo. Los procesos stdio no heredan tus claves de modelos, solo lo que pongas en `env`.
 - Las herramientas llegan al modelo como `mcp__<servidor>__<herramienta>`.
 - **Piden confirmación por defecto.** Usa `autoApprove` con una lista de herramientas (p. ej. solo las de lectura) o `true` para todas.
-- Si un servidor falla al conectar, se avisa y el resto sigue funcionando. `/mcp` muestra el estado y las herramientas.
+- **Menos herramientas, menos tokens.** Cada herramienta que se expone ocupa tokens en todos los turnos (y los modelos gratuitos tienen un tope por minuto). `includeTools` deja solo las que listes (nombres originales del servidor) y `excludeTools` quita las que no quieras. Sin ninguna de las dos, se exponen todas.
+- Si un servidor falla al conectar, se avisa y el resto sigue funcionando. `/mcp` muestra el estado y las herramientas. Lo que el servidor escribe por stderr no sale por pantalla: va a `~/.agente/logs/mcp-<servidor>.log`.
 
 ## Sesión interactiva
 

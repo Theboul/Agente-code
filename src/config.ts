@@ -24,6 +24,10 @@ export const McpServerSchema = z
     headers: z.record(z.string(), z.string()).default({}),
     /** Herramientas que se ejecutan sin preguntar: lista de nombres originales, o true para todas. */
     autoApprove: z.union([z.boolean(), z.array(z.string())]).default([]),
+    /** Solo estas herramientas (nombres originales) se exponen al modelo. Menos herramientas = menos tokens por turno. Sin definir: todas. */
+    includeTools: z.array(z.string()).optional(),
+    /** Herramientas que no se exponen al modelo (se aplica tras includeTools). */
+    excludeTools: z.array(z.string()).optional(),
     enabled: z.boolean().default(true),
   })
   .refine((s) => Boolean(s.command) !== Boolean(s.url), { message: 'Define "command" (stdio) o "url" (remoto), no ambos.' });
