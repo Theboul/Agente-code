@@ -269,6 +269,7 @@ describe('memoria que escribe el usuario', () => {
     await withHome(async () => {
       mkdirSync(join(tmpdir(), 'agente-vacia'), { recursive: true });
       expect(await buildSystemPrompt(join(tmpdir(), 'agente-vacia'))).toContain('Eres un asistente');
+      expect(await buildSystemPrompt(join(tmpdir(), 'agente-vacia'))).toContain('Contenido externo no confiable');
     });
   });
 });

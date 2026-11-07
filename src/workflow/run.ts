@@ -4,6 +4,7 @@ import { buildSystemPrompt } from '../agent/system.js';
 import type { Config, Role } from '../config.js';
 import { addWorktree, branchExists, createBranch, currentBranch, defaultWorktreeDir, fullDiff, hasCommits, isClean, repoRoot } from '../git.js';
 import { execCommand } from '../tools/bash.js';
+import { colorizeDiff } from '../ui/ansi.js';
 import { branchNameFor, type Issue } from './issue.js';
 import { loadPrompt } from './prompts.js';
 import { saveRun } from './runs.js';
@@ -208,7 +209,7 @@ export async function runWorkflow(o: WorkflowOptions): Promise<WorkflowResult> {
     else {
       const lines = patch.split('\n');
       io.say(`\n${stat}\n`);
-      io.say(lines.slice(0, MAX_DIFF_LINES).join('\n'));
+      io.say(colorizeDiff(lines.slice(0, MAX_DIFF_LINES).join('\n')));
       if (lines.length > MAX_DIFF_LINES) io.say(`…[${lines.length - MAX_DIFF_LINES} líneas más; usa \`git diff\` en ${workdir}]`);
     }
     const reply = await decide(io, '\n¿Aceptar los cambios?  [a]ceptar · [x] descartar · o escribe qué cambiar: ', o.yes, {

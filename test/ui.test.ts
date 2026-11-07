@@ -347,3 +347,12 @@ describe('flujo pedido en lenguaje natural (herramienta start_workflow)', () => 
     expect(await run(ok, { work: async () => Promise.reject(new Error('no hay repo')) })).toBe('Error en el flujo: no hay repo');
   });
 });
+
+describe('colorizeDiff', () => {
+  it('sin color (no es TTY) deja el diff intacto y con color pinta +/-', async () => {
+    const { colorizeDiff, stripAnsi } = await import('../src/ui/ansi.js');
+    const patch = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-viejo\n+nuevo\n igual';
+    expect(colorizeDiff(patch)).toBe(patch); // vitest no es TTY
+    expect(stripAnsi(colorizeDiff(patch))).toBe(patch);
+  });
+});

@@ -45,3 +45,17 @@ export const showCursor = `${ESC}[?25h`;
 export const saveCursor = `${ESC}7`;
 export const restoreCursor = `${ESC}8`;
 export const upOneLine = `${ESC}[1A`;
+
+/** Colorea un diff unificado: verde lo añadido, rojo lo quitado, cian los bloques `@@`, negrita las cabeceras de archivo. */
+export function colorizeDiff(patch: string): string {
+  return patch
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git')) return c.bold(line);
+      if (line.startsWith('@@')) return c.cyan(line);
+      if (line.startsWith('+')) return c.green(line);
+      if (line.startsWith('-')) return c.red(line);
+      return line;
+    })
+    .join('\n');
+}
