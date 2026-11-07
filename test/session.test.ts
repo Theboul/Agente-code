@@ -12,9 +12,11 @@ import { INTERRUPTED_NOTE, ModelTurnError } from '../src/turn-error.js';
 // El chat llama al modelo a través de modelTurn: se simula para probar solo el guardado.
 const seen: ModelMessage[][] = [];
 const systems: string[] = [];
+const toolNames: string[][] = [];
 const hooks = vi.hoisted(() => ({ failNext: undefined as Error | undefined }));
 vi.mock('../src/turn.js', () => ({
-  modelTurn: async (_ctx: unknown, o: { messages: ModelMessage[]; system: string }) => {
+  modelTurn: async (_ctx: unknown, o: { messages: ModelMessage[]; system: string; tools?: Record<string, unknown> }) => {
+    toolNames.push(Object.keys(o.tools ?? {}));
     seen.push(structuredClone(o.messages));
     systems.push(o.system);
     if (hooks.failNext) {
@@ -137,6 +139,17 @@ describe('el chat guarda y retoma la conversación', () => {
     const all = await listSessions(dir);
     expect(all).toHaveLength(1); // misma sesión, no una nueva
     expect(all[0]).toMatchObject({ id: saved.id, messages: 4 });
+  });
+
+  it('ofrece delegate solo si los subagentes están activados', async () => {
+    toolNames.length = 0;
+    await runChat((await deps(undefined, { prompt: 'hola' })).d);
+    expect(toolNames.at(-1)).toContain('delegate');
+
+    const off = await deps(undefined, { prompt: 'hola' });
+    off.d.config.subagents.enabled = false;
+    await runChat(off.d);
+    expect(toolNames.at(-1)).not.toContain('delegate');
   });
 
   it('si no se puede guardar, avisa una vez y el chat sigue', async () => {

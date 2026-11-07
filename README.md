@@ -188,4 +188,14 @@ No se reescribieron: vienen de [`@openharness/core`](https://github.com/MaxGfell
 | `ask_user` (el modelo te pregunta si falta información) | propia, 15 líneas |
 | `web_fetch` (lee una URL pública; bloquea redes internas; pide permiso por dominio) | propia |
 
+### Subagentes
+
+El modelo puede delegar investigaciones largas de solo lectura con la herramienta `delegate`: un subagente explora el código (`readFile`, `listFiles`, `grep`) con su **propio contexto** y devuelve un resumen, así el contexto principal no se llena de lecturas. No puede escribir, ejecutar comandos, preguntar ni leer la web, y su respuesta se marca como datos (no como instrucciones). Su actividad se ve anidada con `│`. Por defecto se ejecutan de una en una y usan el modelo del rol `light`.
+
+```json
+{ "subagents": { "enabled": true, "maxSteps": 12, "maxParallel": 1, "maxResultChars": 4000, "model": "google/gemini-2.5-flash" } }
+```
+
+Esc interrumpe también al subagente. Con `"enabled": false` la herramienta no se ofrece.
+
 Ajustes sobre la librería: `editFile` escapa `$` del código nuevo (la librería lo interpretaba como patrón de `String.replace`) y exige que `oldString` sea único salvo `replaceAll`. `/status` muestra el uso real del contexto según el proveedor (`contexto: 2.069 / 256.000 tokens (1 %) · se compacta al 75 %`); la ventana se toma del modelo (ver `src/models.ts`) con un tope práctico de 256.000 tokens, y `contextWindow` en la configuración manda sobre ambos. La compactación de contexto (`contextWindow` (opcional), `compactAt`) poda resultados viejos de herramientas y luego resume; está escrita sobre el SDK v7 porque la de la librería usa su propia copia del SDK v6 y no acepta nuestros modelos.
