@@ -192,6 +192,12 @@ No se reescribieron: vienen de [`@openharness/core`](https://github.com/MaxGfell
 | `ask_user` (el modelo te pregunta si falta información) | propia, 15 líneas |
 | `web_fetch` (lee una URL pública; bloquea redes internas; pide permiso por dominio) | propia |
 
+Los archivos de configuración del proyecto (`package.json`, `tsconfig*.json`, `biome.json`, `agente.config.json`, `.npmrc`, `.github/workflows/`) **siempre piden confirmación** antes de editarse, incluso con `--yes` o en modo `edits`, y no ofrecen "no volver a preguntar". Así el modelo no puede cambiar en silencio cómo se valida o se construye el proyecto.
+
+### Modelo de respaldo
+
+Con `"fallbackModel": "proveedor/modelo"` en la configuración, si el modelo principal agota la cuota o sigue fallando de forma temporal tras los reintentos, el turno continúa con el de respaldo desde donde se quedó (una sola vez, con aviso). No actúa ante errores de clave o de petición. Se ignora si falta la clave del respaldo.
+
 ### Subagentes
 
 El modelo puede delegar investigaciones largas de solo lectura con la herramienta `delegate`: un subagente explora el código (`readFile`, `listFiles`, `grep`) con su **propio contexto** y devuelve un resumen, así el contexto principal no se llena de lecturas. No puede escribir, ejecutar comandos, preguntar ni leer la web, y su respuesta se marca como datos (no como instrucciones). Su actividad se ve anidada con `│`. Por defecto se ejecutan de una en una y usan el modelo del rol `light`.

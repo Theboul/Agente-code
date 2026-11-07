@@ -241,3 +241,25 @@ describe('compatibilidad: herramientas de la librería (SDK v6) dentro de nuestr
     void dir;
   });
 });
+
+describe('archivos de configuración del proyecto', () => {
+  it('package.json y similares piden confirmación aunque haya --yes o modo edits', async () => {
+    for (const extra of [{ autoApprove: true }, { mode: 'edits' as const }]) {
+      const { dir, asked, perms } = setup(false, extra);
+      writeFileSync(join(dir, 'package.json'), '{}');
+      await expect(new GuardedFsProvider(dir, perms).writeFile('package.json', '{"a":1}')).rejects.toThrow(/DENEGADO/);
+      expect(asked[0]).toContain('archivo de configuración package.json');
+    }
+  });
+  it('un archivo normal con --yes sigue sin preguntar', async () => {
+    const { dir, asked, perms } = setup(false, { autoApprove: true });
+    await new GuardedFsProvider(dir, perms).writeFile(join('src', 'a.js'), 'x');
+    expect(asked).toEqual([]);
+  });
+  it('reconoce los archivos sensibles por ruta', async () => {
+    const { isSensitiveConfig } = await import('../src/tools/guarded.js');
+    for (const f of ['package.json', 'sub/tsconfig.build.json', 'biome.json', 'agente.config.json', '.github/workflows/ci.yml', '.npmrc'])
+      expect(isSensitiveConfig(f)).toBe(true);
+    for (const f of ['src/config.ts', 'README.md', 'src/package.jsonx']) expect(isSensitiveConfig(f)).toBe(false);
+  });
+});

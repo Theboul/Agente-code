@@ -99,6 +99,8 @@ const ConfigSchema = z.object({
   workflow: WorkflowConfig.prefault({}),
   subagents: SubagentsConfig.prefault({}),
   /** Ventana de contexto en tokens. Si falta se usa la del modelo (ver models.ts); al pasar de `compactAt` el historial se resume. */
+  /** Modelo de respaldo (proveedor/modelo): se usa si el principal agota la cuota o falla de forma temporal. */
+  fallbackModel: z.string().optional(),
   contextWindow: z.number().int().positive().optional(),
   compactAt: z.number().min(0.3).max(0.95).default(0.75),
   /** Segundos sin respuesta del modelo antes de abortar (no cuenta el tiempo de las herramientas). */

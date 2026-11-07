@@ -9,8 +9,9 @@
 2. MCP real para trackers; el flujo sincroniza el estado de la issue.
 3. Memoria completa: sesiones retomables, compactación automática, `/remember`, memoria del flujo.
 4. Subagentes de solo lectura con contexto aislado.
-5. Seguridad por capas: rutas, comandos, confirmaciones, secretos redactados, contenido externo como datos.
-6. Verificado en Linux y Windows (CI + smoke).
+5. Seguridad por capas: rutas, comandos, confirmaciones, secretos redactados, contenido externo como datos, archivos de configuración que siempre piden confirmación.
+6. Modelo de respaldo si se agota la cuota.
+7. Verificado en Linux y Windows (CI + smoke).
 
 **Arquitectura:** capas + inyección de dependencias; bucle de agente; pipeline lineal. Ver `docs/ARQUITECTURA.md`.
 

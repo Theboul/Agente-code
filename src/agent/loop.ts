@@ -20,6 +20,12 @@ export interface TurnOptions {
   onToolResult?: (name: string, output: unknown) => void;
 }
 
+/** Modelo de respaldo: se usa una sola vez si el principal agota la cuota o los reintentos por errores temporales. */
+export interface TurnFallback {
+  model: LanguageModel;
+  onSwitch?: (reason: unknown) => void;
+}
+
 /** Consumo real que informa el proveedor (no una estimación). */
 export interface TurnUsage {
   inputTokens: number;
@@ -144,7 +150,12 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
  * Si el turno ya había completado pasos (herramientas ejecutadas), el reintento continúa desde ahí: no se repiten.
  */
 export async function runTurn(
-  opts: TurnOptions & { retries?: number; sleep?: (ms: number) => Promise<void>; onRetry?: (n: number, e: unknown, waitMs: number) => void },
+  opts: TurnOptions & {
+    fallback?: TurnFallback;
+    retries?: number;
+    sleep?: (ms: number) => Promise<void>;
+    onRetry?: (n: number, e: unknown, waitMs: number) => void;
+  },
 ): Promise<TurnResult> {
   const retries = opts.retries ?? 3;
   const sleep = opts.sleep ?? sleepMs;
@@ -152,10 +163,12 @@ export async function runTurn(
   const carried: ModelMessage[] = [];
   let carriedSteps = 0;
   const carriedUsage: TurnUsage = { inputTokens: 0, outputTokens: 0, contextTokens: 0 };
+  let model = opts.model;
+  let fellBack = false;
   for (let attempt = 0; ; attempt++) {
     try {
       // El tope de pasos es del turno entero: los pasos ya hechos en intentos anteriores cuentan.
-      const r = await runTurnOnce({ ...opts, messages: [...opts.messages, ...carried], maxSteps: Math.max(1, opts.maxSteps - carriedSteps) });
+      const r = await runTurnOnce({ ...opts, model, messages: [...opts.messages, ...carried], maxSteps: Math.max(1, opts.maxSteps - carriedSteps) });
       return {
         ...r,
         newMessages: [...carried, ...r.newMessages],
@@ -179,8 +192,17 @@ export async function runTurn(
       const giveUp = (err: unknown): never => {
         throw carried.length ? new TurnFailure(err, [...carried]) : err;
       };
-      if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) giveUp(e);
       const hint = suggestedWaitMs(e);
+      const exhausted = attempt >= retries || (hint !== undefined && hint > MAX_WAIT_MS);
+      if (!opts.abortSignal?.aborted && isTransient(e) && exhausted && opts.fallback && !fellBack) {
+        // El modelo principal no da más de sí: se continúa con el de respaldo desde donde se quedó.
+        fellBack = true;
+        model = opts.fallback.model;
+        opts.fallback.onSwitch?.(e);
+        attempt = -1;
+        continue;
+      }
+      if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) giveUp(e);
       if (hint !== undefined && hint > MAX_WAIT_MS) giveUp(quotaExhaustedError(hint));
       const wait = retryDelayMs(e, attempt);
       opts.onRetry?.(attempt + 1, e, wait);

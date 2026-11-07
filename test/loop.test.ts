@@ -235,3 +235,39 @@ describe('trabajo parcial al fallar', () => {
     expect(String(err.message)).toContain('sin red');
   });
 });
+
+describe('modelo de respaldo', () => {
+  const ok = [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: 't' },
+    { type: 'text-delta', id: 't', delta: 'del respaldo' },
+    { type: 'text-end', id: 't' },
+    { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage },
+  ];
+  const failing = (err: unknown) => new MockLanguageModelV4({ doStream: async () => Promise.reject(err) });
+  const working = () => new MockLanguageModelV4({ doStream: async () => ({ stream: convertArrayToReadableStream(ok as never) }) });
+  const base = { system: 's', messages: [{ role: 'user' as const, content: 'x' }], tools: {}, maxSteps: 3, sleep: async () => {} };
+  const daily = Object.assign(new Error('x'), { lastError: new Error('quota. Please retry in 9h55m28.03s.') });
+
+  it('con la cuota diaria agotada continúa con el respaldo y avisa una vez', async () => {
+    const switched: unknown[] = [];
+    const r = await runTurn({ ...base, model: failing(daily), fallback: { model: working(), onSwitch: (e) => switched.push(e) } });
+    expect(r.text).toBe('del respaldo');
+    expect(switched).toHaveLength(1);
+  });
+
+  it('si el respaldo también falla, el error llega (no hay bucle de respaldos)', async () => {
+    await expect(runTurn({ ...base, model: failing(daily), fallback: { model: failing(daily) } })).rejects.toThrow(/Cuota agotada/);
+  });
+
+  it('un error que no es temporal (clave inválida) no cambia de modelo', async () => {
+    const bad = Object.assign(new Error('clave inválida'), { statusCode: 401 });
+    let used = false;
+    await expect(runTurn({ ...base, model: failing(bad), fallback: { model: working(), onSwitch: () => (used = true) } })).rejects.toThrow(/clave inválida/);
+    expect(used).toBe(false);
+  });
+
+  it('sin respaldo el comportamiento no cambia', async () => {
+    await expect(runTurn({ ...base, model: failing(daily) })).rejects.toThrow(/Cuota agotada/);
+  });
+});

@@ -39,6 +39,10 @@ export function previewChange(oldText: string | undefined, newText: string): str
  * Sistema de archivos del proyecto: nada fuera del directorio, y toda escritura, borrado o
  * renombrado pide confirmación (con vista previa del cambio).
  */
+/** Archivos que cambian cómo se construye, valida o ejecuta el proyecto: el modelo no debe tocarlos sin que el usuario lo vea. */
+const CONFIG_FILE = /(^|\/)(package\.json|tsconfig[^/]*\.json|biome\.jsonc?|agente\.config\.json|\.npmrc)$|(^|\/)\.github\/workflows\//;
+export const isSensitiveConfig = (rel: string): boolean => CONFIG_FILE.test(rel);
+
 export class GuardedFsProvider extends NodeFsProvider implements FsProvider {
   constructor(
     private readonly root: string,
@@ -58,13 +62,16 @@ export class GuardedFsProvider extends NodeFsProvider implements FsProvider {
   override async writeFile(p: string, content: string): Promise<void> {
     const old = (await this.exists(p)) ? await super.readFile(p) : undefined;
     if (old === content) return;
-    const reply = await authorizeDetailed(this.perms, 'ask', {
+    // Un archivo de configuración nunca se aprueba solo (ni con --yes ni en modo "edits") ni con "no volver a preguntar".
+    const config = isSensitiveConfig(this.rel(p));
+    const perms: Permissions = config ? { ...this.perms, autoApprove: false, mode: this.perms.mode === 'edits' ? 'ask' : this.perms.mode } : this.perms;
+    const reply = await authorizeDetailed(perms, 'ask', {
       kind: old === undefined ? 'create' : 'edit',
-      title: old === undefined ? 'Crear archivo' : 'Editar archivo',
+      title: config ? 'Editar archivo de CONFIGURACIÓN' : old === undefined ? 'Crear archivo' : 'Editar archivo',
       target: this.rel(p),
       preview: previewChange(old, content).split('\n'),
-      question: `¿Escribir ${this.rel(p)}?  ${previewChange(old, content)}`,
-      session: { key: 'edits', label: 'las ediciones' },
+      question: `¿Escribir ${config ? 'el archivo de configuración ' : ''}${this.rel(p)}?  ${previewChange(old, content)}`,
+      session: config ? undefined : { key: 'edits', label: 'las ediciones' },
     });
     if (!reply.allow) throw new Error(denialMessage(reply));
     await super.writeFile(p, content);

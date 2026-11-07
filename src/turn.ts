@@ -71,8 +71,16 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
       },
     });
     ui.thinking();
+    const fallbackId = config.fallbackModel;
+    const useFallback = fallbackId && fallbackId !== o.modelId && !missingKeyHint(fallbackId, config);
     const r = await runTurn({
       model,
+      fallback: useFallback
+        ? {
+            model: resolveModel(fallbackId, config),
+            onSwitch: () => ui.warn(`${o.modelId} no responde o agotó su cuota: sigo con el modelo de respaldo ${fallbackId}.`),
+          }
+        : undefined,
       system: o.system,
       tools: o.tools,
       messages: o.messages,
