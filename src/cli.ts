@@ -30,7 +30,8 @@ import { makePrCreator } from './workflow/pr.js';
 import { DEFAULT_PROMPTS, loadPrompt } from './workflow/prompts.js';
 import { runWorkflow, type StageRunner } from './workflow/run.js';
 import { findRun } from './workflow/runs.js';
-import { ship } from './workflow/ship.js';
+import { type ShipResult, ship } from './workflow/ship.js';
+import { type FlowOutcome, summarizeFlow } from './workflow/summary.js';
 import { detectVerifyCommands } from './workflow/verify.js';
 
 const HELP = `agente — arnés de código multi-modelo
@@ -384,11 +385,13 @@ function workflowIO(ctx: Ctx) {
   };
 }
 
-async function startWork(ctx: Ctx, issue: Issue) {
+/** Ejecuta el flujo y devuelve el registro de lo que pasó (para la memoria de la conversación). */
+async function startWork(ctx: Ctx, issue: Issue): Promise<string | undefined> {
   // "Aceptar las ediciones solas" elegido en el plan vale solo durante este flujo.
   const modeBefore = ctx.perms.mode;
   try {
-    await runWork(ctx, issue);
+    const outcome = await runWork(ctx, issue);
+    return outcome ? summarizeFlow(outcome) : undefined;
   } finally {
     ctx.perms.mode = modeBefore;
   }
@@ -417,7 +420,7 @@ async function withExtraContext(ctx: Ctx, issue: Issue): Promise<Issue> {
   return extra ? { ...issue, body: `${issue.body}\n\n## Contexto adicional del usuario\n${extra}`.trim() } : issue;
 }
 
-async function runWork(ctx: Ctx, original: Issue) {
+async function runWork(ctx: Ctx, original: Issue): Promise<FlowOutcome | undefined> {
   const issue = await withExtraContext(ctx, original);
   const result = await runWorkflow({
     cwd: ctx.cwd,
@@ -430,9 +433,10 @@ async function runWork(ctx: Ctx, original: Issue) {
     runStage: makeStageRunner(ctx),
     io: workflowIO(ctx),
   });
+  const base: FlowOutcome = { issue, status: result.status, branch: result.branch, base: result.base, verified: result.verified, plan: result.plan };
   if (result.status !== 'ready') {
     process.exitCode = result.status === 'failed' ? 1 : 0;
-    return;
+    return base;
   }
   const now =
     values.ship ||
@@ -445,15 +449,21 @@ async function runWork(ctx: Ctx, original: Issue) {
           cancel: 'No, lo entrego después (/ship)',
         })
       ).kind === 'approve');
-  if (now)
-    await deliver(ctx, { ...(result as Required<Pick<typeof result, 'branch' | 'workdir' | 'base' | 'issue' | 'plan'>> & typeof result), pushConfirmed: true });
-  else console.log(`Cuando quieras entregarlo: agente ship ${result.branch}`);
+  if (now) {
+    const shipped = await deliver(ctx, {
+      ...(result as Required<Pick<typeof result, 'branch' | 'workdir' | 'base' | 'issue' | 'plan'>> & typeof result),
+      pushConfirmed: true,
+    });
+    return { ...base, ship: shipped };
+  }
+  console.log(`Cuando quieras entregarlo: agente ship ${result.branch}`);
+  return base;
 }
 
 async function deliver(
   ctx: Ctx,
   r: { branch: string; workdir: string; base: string; issue: Issue; plan: string; verified?: boolean; runFile?: string; pushConfirmed?: boolean },
-) {
+): Promise<ShipResult> {
   const runStage = makeStageRunner(ctx);
   const res = await ship({
     root: ctx.root ?? ctx.cwd,
@@ -474,16 +484,18 @@ async function deliver(
     io: workflowIO(ctx),
   });
   if (!res.pushed) process.exitCode = 1;
+  return res;
 }
 
-async function shipBranch(ctx: Ctx, branchArg?: string) {
+async function shipBranch(ctx: Ctx, branchArg?: string): Promise<string | undefined> {
   const root = ctx.root;
   if (!root) throw new Error('Este directorio no es un repositorio git.');
   const branch = branchArg ?? (await currentBranch(root));
   const found = await findRun(root, branch);
   if (!found) throw new Error(`No hay una ejecución de \`agente work\` registrada para la rama "${branch}".`);
   const { rec, file } = found;
-  await deliver(ctx, { ...rec, workdir: existsSync(rec.workdir) ? rec.workdir : root, runFile: file });
+  const shipped = await deliver(ctx, { ...rec, workdir: existsSync(rec.workdir) ? rec.workdir : root, runFile: file });
+  return summarizeFlow({ issue: rec.issue, status: rec.status, branch: rec.branch, base: rec.base, verified: rec.verified, plan: rec.plan, ship: shipped });
 }
 
 async function work(ctx: Ctx, args: string[]) {
@@ -492,12 +504,15 @@ async function work(ctx: Ctx, args: string[]) {
   await startWork(ctx, await resolveIssue(ctx, ref));
 }
 
-async function issues(ctx: Ctx) {
+async function issues(ctx: Ctx): Promise<string | undefined> {
   if (!process.stdin.isTTY) throw new Error('`agente issues` es interactivo; usa `agente work <issue>` en scripts.');
   const root = ctx.root ?? ctx.cwd;
   const json = await askTracker(ctx, await loadPrompt(root, 'issue-list', { query: ctx.config.workflow.issueQuery }));
   const list = IssueListSchema.parse(json);
-  if (!list.length) return console.log('No hay issues que coincidan.');
+  if (!list.length) {
+    console.log('No hay issues que coincidan.');
+    return undefined;
+  }
   const choice = await selectIndex({
     count: list.length,
     keys: stdinKeys(),
@@ -512,10 +527,10 @@ async function issues(ctx: Ctx) {
     ],
   });
   ctx.completion.issues = list.flatMap((i) => (i.key ? [i.key] : []));
-  if (choice === 'cancel') return;
+  if (choice === 'cancel') return undefined;
   const chosen = list[choice];
-  if (!chosen) return;
-  await startWork(ctx, await resolveIssue(ctx, chosen.key ?? chosen.title));
+  if (!chosen) return undefined;
+  return startWork(ctx, await resolveIssue(ctx, chosen.key ?? chosen.title));
 }
 
 /** Crea la config y los prompts editables sin pisar nada existente. */

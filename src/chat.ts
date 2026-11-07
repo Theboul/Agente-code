@@ -20,11 +20,12 @@ import { appendHistory } from './ui/history.js';
 import type { Interrupt } from './ui/interrupt.js';
 import type { Ui } from './ui/render.js';
 
+/** Los flujos devuelven un registro de lo que hicieron (plan, rama, entrega…) para la memoria de la conversación. */
 export interface ChatHandlers {
   /** Flujo completo para una issue (clave, URL, archivo o texto). */
-  work(ref: string): Promise<void>;
-  issues(): Promise<void>;
-  ship(branch?: string): Promise<void>;
+  work(ref: string): Promise<string | undefined>;
+  issues(): Promise<string | undefined>;
+  ship(branch?: string): Promise<string | undefined>;
   /** Conexión guiada a Jira, Trello o GitHub. */
   connect(which?: string): Promise<void>;
   /** Pide y guarda la clave del proveedor del modelo indicado. */
@@ -95,8 +96,8 @@ export function workflowTool(perms: Permissions, handlers: ChatHandlers) {
       });
       if (!reply.allow) return denialMessage(reply);
       try {
-        await handlers.work(issue);
-        return 'El flujo terminó (el usuario vio el resultado en pantalla).';
+        // El registro del flujo vuelve al modelo como resultado de la herramienta: así recuerda qué se hizo.
+        return (await handlers.work(issue)) ?? 'El flujo terminó (el usuario vio el resultado en pantalla).';
       } catch (e) {
         return `Error en el flujo: ${e instanceof Error ? e.message : e}`;
       }
@@ -310,8 +311,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
         await guarded(() => handlers.login(modelId));
         break;
       case '/work':
-        if (!arg) await guarded(() => handlers.issues());
-        else await guarded(() => handlers.work(arg));
+        await guarded(() => (arg ? handlers.work(arg) : handlers.issues()));
         break;
       case '/issues':
         await guarded(() => handlers.issues());
@@ -325,9 +325,17 @@ export async function runChat(d: ChatDeps): Promise<void> {
     return true;
   };
 
-  const guarded = async (fn: () => Promise<void>) => {
+  /** Anota en la conversación lo que hizo un flujo, para que el modelo lo recuerde (también al retomar la sesión). */
+  const recordFlow = async (summary: string) => {
+    // Pareja usuario/asistente: mantiene la alternancia de roles que esperan los proveedores.
+    history.push({ role: 'user', content: summary }, { role: 'assistant', content: 'Anotado: tengo en cuenta ese flujo.' });
+    await persist();
+  };
+
+  const guarded = async (fn: () => Promise<unknown>) => {
     try {
-      await fn();
+      const summary = await fn();
+      if (typeof summary === 'string' && summary) await recordFlow(summary);
     } catch (e) {
       ui.error(e instanceof Error ? e.message : String(e));
     }
