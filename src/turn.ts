@@ -1,6 +1,6 @@
 import type { ModelMessage, ToolSet } from 'ai';
 import { compactIfNeeded } from './agent/compaction.js';
-import { runTurn } from './agent/loop.js';
+import { runTurn, type TurnUsage } from './agent/loop.js';
 import type { Config } from './config.js';
 import { keyInstructions } from './connect/connect.js';
 import { missingKeyHint, resolveModel } from './providers.js';
@@ -25,7 +25,15 @@ export interface ModelTurnOptions {
 }
 
 /** Un turno del agente con la salida visual de la sesión; Esc o Ctrl+C lo interrumpen. */
-export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<{ text: string; newMessages: ModelMessage[] }> {
+export interface ModelTurnResult {
+  text: string;
+  newMessages: ModelMessage[];
+  usage: TurnUsage;
+  stepsUsed: number;
+  limitReached: boolean;
+}
+
+export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<ModelTurnResult> {
   const { config, ui, interrupt } = ctx;
   const hint = missingKeyHint(o.modelId, config);
   if (hint) throw new Error(keyInstructions(o.modelId, config));
@@ -60,7 +68,12 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
         ui.thinking();
       },
     });
-    return { text: r.text, newMessages: r.newMessages };
+    if (r.limitReached) {
+      ui.warn(
+        `Se alcanzó el límite de ${config.maxSteps} pasos del turno y el trabajo puede estar a medias. Escribe "continúa" para que siga (o sube maxSteps en la configuración).`,
+      );
+    }
+    return { text: r.text, newMessages: r.newMessages, usage: r.usage, stepsUsed: r.stepsUsed, limitReached: r.limitReached };
   } catch (e) {
     if (ac.signal.aborted) throw new Error('Interrumpido por el usuario.');
     const msg = e instanceof Error ? e.message : String(e);

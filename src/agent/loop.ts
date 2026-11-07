@@ -15,10 +15,23 @@ export interface TurnOptions {
   onToolResult?: (name: string, output: unknown) => void;
 }
 
+/** Consumo real que informa el proveedor (no una estimación). */
+export interface TurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Tokens de entrada del último paso: lo que ocupa hoy el contexto de la conversación. */
+  contextTokens: number;
+}
+
 export interface TurnResult {
   /** Mensajes nuevos generados en este turno (asistente + herramientas). */
   newMessages: ModelMessage[];
   text: string;
+  /** Pasos del modelo que se usaron en el turno (cada vuelta modelo → herramientas es un paso). */
+  stepsUsed: number;
+  /** El turno se cortó por llegar a `maxSteps` mientras el modelo aún pedía herramientas: el trabajo puede estar a medias. */
+  limitReached: boolean;
+  usage: TurnUsage;
 }
 
 /** Ejecuta un turno completo del bucle agéntico: modelo → herramientas → modelo… hasta terminar. */
@@ -27,6 +40,8 @@ class PartialTurnError extends Error {
   constructor(
     readonly original: unknown,
     readonly partial: ModelMessage[],
+    readonly steps: number,
+    readonly usage: TurnUsage,
   ) {
     super(original instanceof Error ? original.message : String(original));
   }
@@ -34,6 +49,8 @@ class PartialTurnError extends Error {
 
 async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
   const done: ModelMessage[] = [];
+  const used: TurnUsage = { inputTokens: 0, outputTokens: 0, contextTokens: 0 };
+  let steps = 0;
   // Vigilante de inactividad: se reinicia con cada fragmento recibido del modelo. El tiempo que
   // tardan las herramientas (tests, shell) no cuenta porque entonces no se espera al modelo.
   const ac = new AbortController();
@@ -58,12 +75,19 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
     tools: opts.tools,
     stopWhen: stepCountIs(opts.maxSteps),
     abortSignal: ac.signal,
-    onStepFinish: (step) => void done.push(...((step.response.messages ?? []) as ModelMessage[])),
+    onStepFinish: (step) => {
+      done.push(...((step.response.messages ?? []) as ModelMessage[]));
+      steps++;
+      used.inputTokens += step.usage.inputTokens ?? 0;
+      used.outputTokens += step.usage.outputTokens ?? 0;
+      used.contextTokens = step.usage.inputTokens ?? used.contextTokens;
+    },
     onError: () => {}, // los errores se tratan abajo; evita el volcado por defecto del SDK
   });
 
   let text = '';
   let newMessages: ModelMessage[];
+  let finishReason: string | undefined;
   try {
     arm();
     for await (const part of result.fullStream) {
@@ -88,15 +112,16 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
       }
     }
     newMessages = (await result.responseMessages) as ModelMessage[];
+    finishReason = await result.finishReason;
   } catch (e) {
     const err = timedOut ? new Error(`El modelo no respondió en ${(opts.idleTimeoutMs ?? 0) / 1000}s (reintenta o cambia de modelo con --model).`) : e;
-    throw done.length ? new PartialTurnError(err, done) : err;
+    throw done.length ? new PartialTurnError(err, done, steps, used) : err;
   } finally {
     disarm();
     opts.abortSignal?.removeEventListener('abort', onUserAbort);
   }
 
-  return { newMessages, text };
+  return { newMessages, text, stepsUsed: steps, limitReached: steps >= opts.maxSteps && finishReason === 'tool-calls', usage: used };
 }
 
 type ProviderError = { isRetryable?: boolean; statusCode?: number; code?: number; message?: string; lastError?: unknown; cause?: unknown };
@@ -147,13 +172,31 @@ export async function runTurn(
   const sleep = opts.sleep ?? sleepMs;
   // Pasos ya completados en intentos fallidos: el reintento continúa desde ahí en vez de repetirlos.
   const carried: ModelMessage[] = [];
+  let carriedSteps = 0;
+  const carriedUsage: TurnUsage = { inputTokens: 0, outputTokens: 0, contextTokens: 0 };
   for (let attempt = 0; ; attempt++) {
     try {
-      const r = await runTurnOnce({ ...opts, messages: [...opts.messages, ...carried] });
-      return { ...r, newMessages: [...carried, ...r.newMessages] };
+      // El tope de pasos es del turno entero: los pasos ya hechos en intentos anteriores cuentan.
+      const r = await runTurnOnce({ ...opts, messages: [...opts.messages, ...carried], maxSteps: Math.max(1, opts.maxSteps - carriedSteps) });
+      return {
+        ...r,
+        newMessages: [...carried, ...r.newMessages],
+        stepsUsed: carriedSteps + r.stepsUsed,
+        usage: {
+          inputTokens: carriedUsage.inputTokens + r.usage.inputTokens,
+          outputTokens: carriedUsage.outputTokens + r.usage.outputTokens,
+          contextTokens: r.usage.contextTokens,
+        },
+      };
     } catch (thrown) {
       const e = thrown instanceof PartialTurnError ? thrown.original : thrown;
-      if (thrown instanceof PartialTurnError) carried.push(...thrown.partial);
+      if (thrown instanceof PartialTurnError) {
+        carried.push(...thrown.partial);
+        carriedSteps += thrown.steps;
+        carriedUsage.inputTokens += thrown.usage.inputTokens;
+        carriedUsage.outputTokens += thrown.usage.outputTokens;
+        carriedUsage.contextTokens = thrown.usage.contextTokens || carriedUsage.contextTokens;
+      }
       if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) throw e;
       const hint = suggestedWaitMs(e);
       if (hint !== undefined && hint > MAX_WAIT_MS) {

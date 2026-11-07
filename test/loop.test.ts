@@ -142,3 +142,64 @@ describe('reintento con progreso', () => {
     expect(r.newMessages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
   });
 });
+
+describe('uso real y límite de pasos', () => {
+  const usage100 = {
+    inputTokens: { total: 100, noCache: 100, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: 20, text: 20, reasoning: 0 },
+  };
+  const toolStep = [
+    { type: 'stream-start', warnings: [] },
+    { type: 'tool-call', toolCallId: 'c', toolName: 'eco', input: JSON.stringify({ x: 'a' }) },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool' }, usage: usage100 },
+  ];
+  const textStep = [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: 't' },
+    { type: 'text-delta', id: 't', delta: 'listo' },
+    { type: 'text-end', id: 't' },
+    { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: usage100 },
+  ];
+  const eco = { eco: tool({ description: 'eco', inputSchema: z.object({ x: z.string() }), execute: async ({ x }) => x }) };
+  const modelOf = (...steps: unknown[][]) => {
+    let n = 0;
+    return new MockLanguageModelV4({
+      doStream: async () => ({ stream: convertArrayToReadableStream((steps[Math.min(n++, steps.length - 1)] ?? textStep) as never) }),
+    });
+  };
+  const base = { system: 's', messages: [{ role: 'user' as const, content: 'x' }], tools: eco };
+
+  it('devuelve los tokens reales del proveedor, los pasos usados y no marca límite si el modelo terminó solo', async () => {
+    const r = await runTurn({ ...base, model: modelOf(toolStep, textStep), maxSteps: 5 });
+    expect(r.stepsUsed).toBe(2);
+    expect(r.limitReached).toBe(false);
+    expect(r.usage).toEqual({ inputTokens: 200, outputTokens: 40, contextTokens: 100 });
+  });
+
+  it('marca el límite cuando el turno se corta con el modelo aún pidiendo herramientas', async () => {
+    const r = await runTurn({ ...base, model: modelOf(toolStep), maxSteps: 3 });
+    expect(r.stepsUsed).toBe(3);
+    expect(r.limitReached).toBe(true);
+  });
+
+  it('terminar justo en el último paso permitido no cuenta como límite', async () => {
+    const r = await runTurn({ ...base, model: modelOf(toolStep, textStep), maxSteps: 2 });
+    expect(r.stepsUsed).toBe(2);
+    expect(r.limitReached).toBe(false);
+  });
+
+  it('el tope de pasos es del turno entero: los pasos de intentos fallidos cuentan', async () => {
+    let calls = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        calls++;
+        if (calls === 2) throw Object.assign(new Error('503'), { statusCode: 503, isRetryable: true });
+        return { stream: convertArrayToReadableStream(toolStep as never) };
+      },
+    });
+    const r = await runTurn({ ...base, model, maxSteps: 3, sleep: async () => {} });
+    expect(r.stepsUsed).toBe(3); // 1 paso, fallo, y solo 2 más: no vuelve a empezar de cero
+    expect(r.limitReached).toBe(true);
+    expect(r.usage.inputTokens).toBe(300);
+  });
+});
