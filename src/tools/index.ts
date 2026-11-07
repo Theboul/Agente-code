@@ -33,3 +33,9 @@ export function readOnlyTools(cwd: string, perms: Permissions): ToolSet {
   const { readFile, listFiles, grep } = createFsTools(new GuardedFsProvider(cwd, perms));
   return { readFile, listFiles, grep, ask_user: askUserTool(perms), web_fetch: webFetchTool(perms) } as ToolSet;
 }
+
+/** Solo lectura estricta para subagentes: leer, listar y buscar. Sin preguntas al usuario ni acceso a la web. */
+export function researchTools(cwd: string, perms: Permissions): ToolSet {
+  const { readFile, listFiles, grep } = createFsTools(new GuardedFsProvider(cwd, perms));
+  return { readFile, listFiles, grep } as ToolSet;
+}

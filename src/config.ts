@@ -72,6 +72,21 @@ const WorkflowConfig = z.object({
 
 export type WorkflowConfig = z.infer<typeof WorkflowConfig>;
 
+const SubagentsConfig = z.object({
+  /** Permite al modelo delegar investigaciones de solo lectura en un subagente (herramienta `delegate`). */
+  enabled: z.boolean().default(true),
+  /** Pasos máximos de cada subagente; al llegar devuelve un resultado parcial. */
+  maxSteps: z.number().int().positive().default(12),
+  /** Subagentes a la vez. 1 = en serie: con los planes gratuitos (≈15 peticiones por minuto) el paralelo agota la cuota. */
+  maxParallel: z.number().int().positive().default(1),
+  /** Tamaño máximo del resultado que vuelve al modelo principal. */
+  maxResultChars: z.number().int().positive().default(4000),
+  /** Modelo del subagente. Si falta, el del rol `light`. */
+  model: z.string().optional(),
+});
+
+export type SubagentsConfig = z.infer<typeof SubagentsConfig>;
+
 const ConfigSchema = z.object({
   /** Modelo por defecto, formato "proveedor/modelo". */
   model: z.string().default('google/gemini-3.5-flash-lite'),
@@ -82,6 +97,7 @@ const ConfigSchema = z.object({
   /** Servidores MCP (Jira, Trello, GitHub…). Los valores admiten ${VARIABLE} del entorno. */
   mcpServers: z.record(z.string(), McpServerSchema).default({}),
   workflow: WorkflowConfig.prefault({}),
+  subagents: SubagentsConfig.prefault({}),
   /** Ventana de contexto en tokens. Si falta se usa la del modelo (ver models.ts); al pasar de `compactAt` el historial se resume. */
   contextWindow: z.number().int().positive().optional(),
   compactAt: z.number().min(0.3).max(0.95).default(0.75),

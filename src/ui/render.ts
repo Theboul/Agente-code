@@ -16,9 +16,10 @@ const TOOL_NAMES: Record<string, string> = {
   ask_user: 'Pregunta',
   web_fetch: 'Web',
   start_workflow: 'Flujo',
+  delegate: 'Delegar',
 };
 
-const ARG_KEYS = ['filePath', 'dirPath', 'pattern', 'command', 'url', 'question', 'issue', 'path'];
+const ARG_KEYS = ['filePath', 'dirPath', 'pattern', 'command', 'url', 'question', 'issue', 'task', 'path'];
 
 const record = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 
@@ -124,10 +125,19 @@ export class Ui {
   private spinnerStart = 0;
   private pending = 0;
 
-  constructor(private readonly out: Out = process.stdout) {}
+  constructor(
+    private readonly out: Out = process.stdout,
+    /** Sangría de cada línea: la actividad de un subagente se dibuja anidada bajo la llamada que la originó. */
+    private readonly indent = '',
+  ) {}
 
   private write(s: string) {
-    this.out.write(s);
+    this.out.write(this.indent ? s.replace(/^(?=.)/gm, this.indent) : s);
+  }
+
+  /** Salida anidada (un nivel más de sangría con una barra), para mostrar lo que hace un subagente. */
+  nested(): Ui {
+    return new Ui(this.out, `${this.indent}  ${c.dim('│')} `);
   }
 
   /** Muestra "✻ Pensando… (3s · Esc para interrumpir)" mientras se espera al modelo. */
@@ -136,8 +146,8 @@ export class Ui {
     this.spinnerStart = Date.now();
     let i = 0;
     const tick = () =>
-      this.write(
-        `${clearLine}${c.cyan(FRAMES[i++ % FRAMES.length]!)} ${c.dim(`${label}… (${Math.round((Date.now() - this.spinnerStart) / 1000)}s · Esc para interrumpir)`)}`,
+      this.out.write(
+        `${clearLine}${this.indent}${c.cyan(FRAMES[i++ % FRAMES.length]!)} ${c.dim(`${label}… (${Math.round((Date.now() - this.spinnerStart) / 1000)}s · Esc para interrumpir)`)}`,
       );
     tick();
     this.spinner = setInterval(tick, 250);
