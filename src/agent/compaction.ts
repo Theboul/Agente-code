@@ -33,14 +33,22 @@ function protectedBoundary(messages: ModelMessage[], protectedTokens: number): n
  */
 export async function compactIfNeeded(
   messages: ModelMessage[],
-  o: { model: LanguageModel; contextWindow: number; ratio: number; signal?: AbortSignal },
+  o: {
+    model: LanguageModel;
+    contextWindow: number;
+    ratio: number;
+    signal?: AbortSignal /** Tamaño real conocido (informado por el proveedor); se usa si supera a la estimación. */;
+    knownTokens?: number;
+  },
 ): Promise<number> {
   const limit = o.contextWindow * o.ratio;
-  if (estimateTokens(messages) < limit) return 0;
+  if (Math.max(estimateTokens(messages), o.knownTokens ?? 0) < limit) return 0;
 
   const boundary = protectedBoundary(messages, Math.floor(o.contextWindow * 0.2));
   const pruned = pruneToolResults(messages, boundary);
-  if (estimateTokens(pruned) < limit * 0.8) {
+  // Lo podado también se descuenta del tamaño real: la decisión sigue basándose en el mayor de los dos datos.
+  const saved = estimateTokens(messages) - estimateTokens(pruned);
+  if (Math.max(estimateTokens(pruned), (o.knownTokens ?? 0) - saved) < limit * 0.8) {
     messages.splice(0, messages.length, ...pruned);
     return 0;
   }

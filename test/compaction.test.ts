@@ -30,6 +30,14 @@ const history = (n: number): ModelMessage[] =>
   Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `mensaje ${i} ` + 'x'.repeat(400) }) as ModelMessage);
 
 describe('compactación de contexto', () => {
+  it('usa el tamaño real del proveedor si supera a la estimación', async () => {
+    const model = summaryModel();
+    // ≈ 6.200 tokens estimados en una ventana de 10.000 al 75 %: la estimación sola (6.200 < 7.500) no compacta
+    expect(await compactIfNeeded(history(60), { model, contextWindow: 10_000, ratio: 0.75 })).toBe(0);
+    // el proveedor informa 9.000 (incluye el prompt del sistema y las herramientas): ahora sí
+    expect(await compactIfNeeded(history(60), { model, contextWindow: 10_000, ratio: 0.75, knownTokens: 9_000 })).toBeGreaterThan(0);
+  });
+
   it('no hace nada por debajo del umbral', async () => {
     const msgs = history(4);
     expect(await compactIfNeeded(msgs, { model: summaryModel(), contextWindow: 100_000, ratio: 0.75 })).toBe(0);

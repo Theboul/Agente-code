@@ -3,6 +3,7 @@ import { compactIfNeeded } from './agent/compaction.js';
 import { runTurn, type TurnUsage } from './agent/loop.js';
 import type { Config } from './config.js';
 import { keyInstructions } from './connect/connect.js';
+import { contextWindowFor } from './models.js';
 import { missingKeyHint, resolveModel } from './providers.js';
 import { truncate } from './ui/ansi.js';
 import type { Interrupt } from './ui/interrupt.js';
@@ -20,6 +21,8 @@ export interface ModelTurnOptions {
   tools: ToolSet;
   /** Historial: se compacta en sitio si hace falta. El llamador añade `newMessages` al terminar. */
   messages: ModelMessage[];
+  /** Tokens reales del contexto según el último turno (si se conocen): la compactación usa el mayor entre esto y su estimación. */
+  knownTokens?: number;
   /** false = redacción interna (commit, PR): el texto no se muestra tal cual. */
   stream?: boolean;
 }
@@ -44,7 +47,13 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
   process.once('SIGINT', abort);
   try {
     const model = resolveModel(o.modelId, config);
-    const removed = await compactIfNeeded(o.messages, { model, contextWindow: config.contextWindow, ratio: config.compactAt, signal: ac.signal });
+    const removed = await compactIfNeeded(o.messages, {
+      model,
+      contextWindow: contextWindowFor(o.modelId, config.contextWindow),
+      ratio: config.compactAt,
+      signal: ac.signal,
+      knownTokens: o.knownTokens,
+    });
     if (removed) ui.notice(`⇣ Contexto compactado (${removed} mensajes resumidos)`);
     ui.thinking();
     const r = await runTurn({

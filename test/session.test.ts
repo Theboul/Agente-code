@@ -13,7 +13,13 @@ const seen: ModelMessage[][] = [];
 vi.mock('../src/turn.js', () => ({
   modelTurn: async (_ctx: unknown, o: { messages: ModelMessage[] }) => {
     seen.push(structuredClone(o.messages));
-    return { text: 'ok', newMessages: [{ role: 'assistant', content: `respuesta ${o.messages.length}` }] };
+    return {
+      text: 'ok',
+      newMessages: [{ role: 'assistant', content: `respuesta ${o.messages.length}` }],
+      usage: { inputTokens: 100, outputTokens: 10, contextTokens: 100 },
+      stepsUsed: 1,
+      limitReached: false,
+    };
   },
 }));
 

@@ -82,8 +82,8 @@ const ConfigSchema = z.object({
   /** Servidores MCP (Jira, Trello, GitHub…). Los valores admiten ${VARIABLE} del entorno. */
   mcpServers: z.record(z.string(), McpServerSchema).default({}),
   workflow: WorkflowConfig.prefault({}),
-  /** Ventana de contexto del modelo en tokens; al pasar de `compactAt` el historial se resume. */
-  contextWindow: z.number().int().positive().default(128_000),
+  /** Ventana de contexto en tokens. Si falta se usa la del modelo (ver models.ts); al pasar de `compactAt` el historial se resume. */
+  contextWindow: z.number().int().positive().optional(),
   compactAt: z.number().min(0.3).max(0.95).default(0.75),
   /** Segundos sin respuesta del modelo antes de abortar (no cuenta el tiempo de las herramientas). */
   requestTimeoutSeconds: z.number().int().positive().default(90),

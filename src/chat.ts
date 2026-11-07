@@ -1,10 +1,12 @@
 import type { createInterface } from 'node:readline/promises';
 import { type ModelMessage, type ToolSet, tool } from 'ai';
 import { z } from 'zod';
+import { estimateTokens } from './agent/compaction.js';
 import { buildSystemPrompt } from './agent/system.js';
 import { type Config, modelFor, ROLES, type Role } from './config.js';
 import { currentBranch } from './git.js';
 import type { McpConnections } from './mcp/client.js';
+import { contextUsage, contextWindowFor, formatContext } from './models.js';
 import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type PermissionMode, type Permissions } from './permissions.js';
 import { missingKeyHint } from './providers.js';
 import { formatWhen, listSessions, loadSession, newSessionId, pruneSessions, type SessionRecord, saveSession, sessionTitle } from './session.js';
@@ -114,6 +116,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
   let history: ModelMessage[] = d.resume?.messages ?? [];
   let sessionId = d.resume?.id ?? newSessionId();
   let sessionStart = d.resume?.createdAt ?? new Date().toISOString();
+  let contextTokens = 0; // tamaño real del contexto según el proveedor, tras el último turno
   let saveFailed = false;
   let pruned = false;
 
@@ -143,8 +146,12 @@ export async function runChat(d: ChatDeps): Promise<void> {
   const turn = async (input: string) => {
     history.push({ role: 'user', content: input });
     try {
-      const { newMessages } = await modelTurn({ config, ui, interrupt }, { modelId, system, tools: currentTools(), messages: history });
+      const { newMessages, usage } = await modelTurn(
+        { config, ui, interrupt },
+        { modelId, system, tools: currentTools(), messages: history, knownTokens: contextTokens },
+      );
       history.push(...newMessages);
+      contextTokens = usage.contextTokens;
       await persist();
     } catch (e) {
       history.pop();
@@ -188,6 +195,13 @@ export async function runChat(d: ChatDeps): Promise<void> {
     if (hint) ui.warn(`Falta ${hint} para ${modelId}. Pégala con /login.`);
   };
 
+  /** Línea de contexto de /status: el dato real del proveedor si existe; si no, una estimación (≈). */
+  const statusContext = (): string => {
+    const window = contextWindowFor(modelId, config.contextWindow);
+    const real = contextTokens > 0;
+    return formatContext(contextUsage(real ? contextTokens : estimateTokens(history), window, config.compactAt), !real);
+  };
+
   const command = async (line: string): Promise<boolean> => {
     const [name = '', ...rest] = line.split(/\s+/);
     const arg = rest.join(' ').trim();
@@ -203,6 +217,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
         break;
       case '/clear':
         history = [];
+        contextTokens = 0;
         sessionId = newSessionId(); // la conversación anterior queda guardada; esta empieza aparte
         sessionStart = new Date().toISOString();
         pruned = false;
@@ -230,6 +245,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
           await guarded(async () => {
             const rec = await loadSession(dir, arg || 'last', sessionId);
             history = rec.messages;
+            contextTokens = 0; // el dato real se conocerá tras el siguiente turno
             sessionId = rec.id;
             sessionStart = rec.createdAt;
             pruned = false;
@@ -242,7 +258,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
         break;
       case '/status':
         ui.notice(
-          `modelo: ${modelId}\nmodo: ${MODE_LABEL[perms.mode ?? 'ask']}\ncarpeta: ${cwd}${branch ? ` (${branch})` : ''}\nhistorial: ${history.length} mensajes${d.sessionDir ? `\nsesión: ${sessionId}` : ''}`,
+          `modelo: ${modelId}\nmodo: ${MODE_LABEL[perms.mode ?? 'ask']}\ncarpeta: ${cwd}${branch ? ` (${branch})` : ''}\nhistorial: ${history.length} mensajes\n${statusContext()}${d.sessionDir ? `\nsesión: ${sessionId}` : ''}`,
         );
         break;
       case '/mode':
