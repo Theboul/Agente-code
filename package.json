@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "biome check .",
-    "format": "biome check --write ."
+    "format": "biome check --write .",
+    "smoke": "npm run build && node scripts/smoke.mjs"
   },
   "engines": {
     "node": ">=22.9"
