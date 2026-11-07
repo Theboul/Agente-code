@@ -11,10 +11,12 @@ import { INTERRUPTED_NOTE, ModelTurnError } from '../src/turn-error.js';
 
 // El chat llama al modelo a través de modelTurn: se simula para probar solo el guardado.
 const seen: ModelMessage[][] = [];
+const systems: string[] = [];
 const hooks = vi.hoisted(() => ({ failNext: undefined as Error | undefined }));
 vi.mock('../src/turn.js', () => ({
-  modelTurn: async (_ctx: unknown, o: { messages: ModelMessage[] }) => {
+  modelTurn: async (_ctx: unknown, o: { messages: ModelMessage[]; system: string }) => {
     seen.push(structuredClone(o.messages));
+    systems.push(o.system);
     if (hooks.failNext) {
       const e = hooks.failNext;
       hooks.failNext = undefined;
@@ -238,6 +240,65 @@ describe('el chat guarda y retoma la conversación', () => {
         },
       });
       expect(await listSessions(dir)).toEqual([]);
+    });
+  });
+
+  describe('memoria de proyecto y de usuario (/remember)', () => {
+    const quietUi = (log: string[] = []) =>
+      new Proxy({}, { get: (_t, k) => (k === 'prompt' ? () => '' : (m?: unknown) => typeof m === 'string' && log.push(m)) }) as never;
+    const run = async (lines: string[], env?: { home: string }) => {
+      const log: string[] = [];
+      const previous = process.env.AGENTE_HOME;
+      if (env) process.env.AGENTE_HOME = env.home;
+      try {
+        const { d } = await deps(undefined, {
+          handlers: {},
+          ui: quietUi(log),
+          interrupt: { onQuit: () => {}, arm: () => () => {}, fire: () => false, quit: () => false },
+          rl: { question: async () => lines.shift() ?? '/exit' },
+        });
+        await runChat(d);
+        return { cwd: d.cwd, log };
+      } finally {
+        if (previous === undefined) delete process.env.AGENTE_HOME;
+        else process.env.AGENTE_HOME = previous;
+      }
+    };
+
+    it('/remember guarda en AGENTE.md y el modelo la ve desde el turno siguiente, sin reiniciar', async () => {
+      systems.length = 0;
+      const { cwd } = await run(['/remember usa pnpm, no npm', 'hola']);
+      expect(readFileSync(join(cwd, 'AGENTE.md'), 'utf8')).toContain('- usa pnpm, no npm');
+      expect(systems.at(-1)).toContain('usa pnpm, no npm');
+    });
+
+    it('/remember -u guarda en la memoria personal (todos los proyectos) con permisos privados', async () => {
+      const home = tmp('mem-home-');
+      systems.length = 0;
+      const { cwd } = await run(['/remember -u respóndeme siempre con ejemplos', 'hola'], { home });
+      expect(readFileSync(join(home, 'memory.md'), 'utf8')).toContain('- respóndeme siempre con ejemplos');
+      expect(() => readFileSync(join(cwd, 'AGENTE.md'), 'utf8')).toThrow(); // el proyecto no se toca
+      expect(systems.at(-1)).toContain('Preferencias del usuario');
+      expect(systems.at(-1)).toContain('respóndeme siempre con ejemplos');
+      if (process.platform !== 'win32') expect(statSync(join(home, 'memory.md')).mode & 0o777).toBe(0o600);
+    });
+
+    it('/memory lista y /memory forget N borra; rechaza secretos y duplicados con un aviso', async () => {
+      const { cwd, log } = await run([
+        '/remember primera',
+        '/remember segunda',
+        '/remember segunda',
+        '/remember mi clave es ghp_' + 'aB3xY9'.repeat(7),
+        '/memory forget 1',
+        '/memory',
+      ]);
+      const text = readFileSync(join(cwd, 'AGENTE.md'), 'utf8');
+      expect(text).not.toContain('primera');
+      expect(text).toContain('- segunda');
+      expect(text).not.toContain('ghp_');
+      expect(log.join('\n')).toMatch(/ya existe/);
+      expect(log.join('\n')).toMatch(/parece contener un secreto/);
+      expect(log.join('\n')).toMatch(/Olvidado \(proyecto\): primera/);
     });
   });
 });

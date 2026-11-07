@@ -6,6 +6,7 @@ import { buildSystemPrompt } from './agent/system.js';
 import { type Config, modelFor, ROLES, type Role } from './config.js';
 import { currentBranch } from './git.js';
 import type { McpConnections } from './mcp/client.js';
+import { addNote, listNotes, MemoryError, type MemoryScope, memoryFile, removeNote } from './memory.js';
 import { contextUsage, contextWindowFor, formatContext } from './models.js';
 import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type PermissionMode, type Permissions } from './permissions.js';
 import { missingKeyHint } from './providers.js';
@@ -64,6 +65,8 @@ const COMMANDS: [string, string][] = [
   ['/connect [jira|trello|github]', 'Conecta tu tracker paso a paso (guarda el token fuera del repo)'],
   ['/login', 'Pega la clave del proveedor del modelo actual (Gemini, Claude, OpenAI)'],
   ['/mode [ask|edits|plan]', 'Modo de permisos (Shift+Tab lo cambia): preguntar, aceptar ediciones solas, solo plan'],
+  ['/remember [-u] <nota>', 'Guarda una nota que el agente recordará siempre: en AGENTE.md del proyecto, o con -u en tu memoria personal'],
+  ['/memory [forget N [-u]]', 'Lista las notas guardadas, o borra la número N'],
   ['/model <prov/modelo>', 'Cambia de modelo'],
   ['/role <plan|implement|light>', 'Usa el modelo configurado para un rol'],
   ['/mcp', 'Estado y herramientas de los servidores MCP'],
@@ -109,7 +112,10 @@ export function workflowTool(perms: Permissions, handlers: ChatHandlers) {
 export async function runChat(d: ChatDeps): Promise<void> {
   const { cwd, config, perms, mcp, rl, ui, interrupt, handlers } = d;
   let modelId = d.model ?? modelFor(config, d.role ?? 'implement');
-  const system = `${await buildSystemPrompt(cwd)}${CHAT_RULES}`;
+  let system = `${await buildSystemPrompt(cwd)}${CHAT_RULES}`;
+  const refreshSystem = async () => {
+    system = `${await buildSystemPrompt(cwd)}${CHAT_RULES}`;
+  };
   const local: ToolSet = {
     ...nativeTools(cwd, perms, { onTodos: (t) => ui.todos(t) }),
     ...(d.prompt === undefined ? { start_workflow: workflowTool(perms, handlers) } : {}),
@@ -272,6 +278,45 @@ export async function runChat(d: ChatDeps): Promise<void> {
           });
         break;
       }
+      case '/remember':
+        await guarded(async () => {
+          const user = /^(-u|--user|--yo)\b/.test(arg);
+          const text = user ? arg.replace(/^(-u|--user|--yo)\s*/, '') : arg;
+          if (!text) return ui.notice('Uso: /remember [-u] <nota>. Con -u se guarda en tu memoria personal; sin él, en AGENTE.md del proyecto.');
+          const scope: MemoryScope = user ? 'user' : 'project';
+          try {
+            const file = await addNote(scope, cwd, text);
+            await refreshSystem();
+            ui.notice(`✔ Recordado (${scope === 'user' ? 'personal' : 'proyecto'}) en ${file}`);
+          } catch (e) {
+            if (!(e instanceof MemoryError)) throw e;
+            ui.warn(e.message);
+          }
+        });
+        break;
+      case '/memory':
+        await guarded(async () => {
+          const forget = /^forget\s+(\d+)\s*(-u|--user|--yo)?$/.exec(arg);
+          if (forget) {
+            const scope: MemoryScope = forget[2] ? 'user' : 'project';
+            try {
+              const removed = await removeNote(scope, cwd, Number(forget[1]));
+              await refreshSystem();
+              ui.notice(`✔ Olvidado (${scope === 'user' ? 'personal' : 'proyecto'}): ${removed}`);
+            } catch (e) {
+              if (!(e instanceof MemoryError)) throw e;
+              ui.warn(e.message);
+            }
+            return;
+          }
+          if (arg) return ui.notice('Uso: /memory   ·   /memory forget <N> [-u]');
+          for (const scope of ['project', 'user'] as const) {
+            const notes = await listNotes(scope, cwd);
+            ui.notice(`${scope === 'user' ? 'Personal' : 'Proyecto'} (${memoryFile(scope, cwd)}): ${notes.length ? '' : 'sin notas'}`);
+            for (const [i, n] of notes.entries()) ui.notice(`  ${i + 1}. ${n}`);
+          }
+        });
+        break;
       case '/mcp':
         printMcp();
         break;

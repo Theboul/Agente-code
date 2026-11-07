@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { loadUserMemory } from '../memory.js';
 
 const BASE = `Eres un asistente de programación que trabaja dentro del repositorio del usuario, desde la consola.
 - Responde en español, de forma concisa.
@@ -10,15 +11,32 @@ const BASE = `Eres un asistente de programación que trabaja dentro del reposito
 - Verifica tu trabajo ejecutando los tests/lint del proyecto cuando existan.
 - Nunca hagas push, merge ni cambios fuera del proyecto sin que el usuario lo pida explícitamente.`;
 
-/** Instrucciones base + AGENTE.md / AGENTS.md del proyecto, si existen. */
-export async function buildSystemPrompt(cwd: string): Promise<string> {
+/** Una sección del prompt: el título solo se muestra si hay contenido. */
+interface Section {
+  title?: string;
+  body: string;
+}
+
+const compose = (sections: Section[]): string =>
+  sections
+    .filter((s) => s.body.trim())
+    .map((s) => (s.title ? `# ${s.title}\n${s.body.trim()}` : s.body.trim()))
+    .join('\n\n');
+
+/**
+ * Prompt del sistema, por secciones: base del arnés, instrucciones del proyecto (AGENTE.md / AGENTS.md) y las
+ * preferencias personales que el usuario guardó con /remember. Las reglas propias de cada modo se añaden aparte.
+ */
+export async function buildSystemPrompt(cwd: string, opts: { userMemory?: string } = {}): Promise<string> {
+  let project: Section = { body: '' };
   for (const name of ['AGENTE.md', 'AGENTS.md']) {
     try {
-      const extra = await readFile(join(cwd, name), 'utf8');
-      return `${BASE}\n\n# Instrucciones del proyecto (${name})\n${extra}`;
+      project = { title: `Instrucciones del proyecto (${name})`, body: (await readFile(join(cwd, name), 'utf8')).slice(0, 20_000) };
+      break;
     } catch {
       /* siguiente candidato */
     }
   }
-  return BASE;
+  const user = opts.userMemory ?? (await loadUserMemory());
+  return compose([{ body: BASE }, project, { title: 'Preferencias del usuario (valen en todos sus proyectos)', body: user }]);
 }

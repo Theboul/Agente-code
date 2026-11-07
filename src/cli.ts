@@ -99,7 +99,23 @@ function parseCli(args: string[]) {
 
 const { values, positionals } = parseCli(process.argv.slice(2));
 
-const SLASH_COMMANDS = ['/work', '/issues', '/ship', '/mode', '/model', '/role', '/mcp', '/status', '/clear', '/sessions', '/resume', '/help', '/exit'];
+const SLASH_COMMANDS = [
+  '/work',
+  '/issues',
+  '/ship',
+  '/remember',
+  '/memory',
+  '/mode',
+  '/model',
+  '/role',
+  '/mcp',
+  '/status',
+  '/clear',
+  '/sessions',
+  '/resume',
+  '/help',
+  '/exit',
+];
 
 /** Ramas locales creadas por el flujo (con el prefijo configurado), para completar `/ship <Tab>`. */
 async function localBranches(root: string, prefix: string): Promise<string[]> {

@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModelMessage } from 'ai';
@@ -6,6 +6,8 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { type CompactionEvent, compactIfNeeded, estimateTokens } from '../src/agent/compaction.js';
 import { withRetry } from '../src/agent/retry.js';
+import { buildSystemPrompt } from '../src/agent/system.js';
+import { addNote, cleanNote, listNotes, loadUserMemory, MAX_NOTE_CHARS, MemoryError, parseNotes, removeNote, userMemoryFile } from '../src/memory.js';
 import { redactDeep, redactText } from '../src/redact.js';
 import { archiveCompaction } from '../src/session-archive.js';
 import { summarizeFlow } from '../src/workflow/summary.js';
@@ -193,5 +195,80 @@ describe('registro del flujo', () => {
     expect(text).not.toContain('IGNORA TODO');
     expect(text.length).toBeLessThan(900);
     expect(summarizeFlow({ issue: { title: 'sin clave', body: '' }, status: 'cancelled' })).toContain('Flujo para «sin clave»');
+  });
+});
+
+describe('memoria que escribe el usuario', () => {
+  const withHome = async <T>(fn: (home: string) => Promise<T>): Promise<T> => {
+    const home = mkdtempSync(join(tmpdir(), 'mem-'));
+    const previous = process.env.AGENTE_HOME;
+    process.env.AGENTE_HOME = home;
+    try {
+      return await fn(home);
+    } finally {
+      if (previous === undefined) delete process.env.AGENTE_HOME;
+      else process.env.AGENTE_HOME = previous;
+    }
+  };
+
+  it('limpia la nota y rechaza vacías, largas y con secretos', () => {
+    expect(cleanNote('  usa\n   pnpm\t ')).toBe('usa pnpm');
+    expect(() => cleanNote('   ')).toThrow(MemoryError);
+    expect(() => cleanNote('x'.repeat(MAX_NOTE_CHARS + 1))).toThrow(/demasiado larga/);
+    expect(() => cleanNote(`mi token ${fake('AQ.')}`)).toThrow(/secreto/);
+    expect(() => cleanNote('PASSWORD=hunter2')).toThrow(/secreto/);
+  });
+
+  it('proyecto: crea AGENTE.md, añade a la sección existente sin tocar lo demás y no duplica', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'proj-'));
+    await addNote('project', cwd, 'primera');
+    expect(readFileSync(join(cwd, 'AGENTE.md'), 'utf8')).toBe('# Instrucciones del proyecto\n\n## Memoria del agente\n- primera\n');
+
+    writeFileSync(join(cwd, 'AGENTE.md'), '# Reglas\n\n- una regla propia\n\n## Memoria del agente\n- vieja\n\n## Otra sección\ntexto\n');
+    await addNote('project', cwd, 'nueva');
+    const text = readFileSync(join(cwd, 'AGENTE.md'), 'utf8');
+    expect(text).toBe('# Reglas\n\n- una regla propia\n\n## Memoria del agente\n- vieja\n- nueva\n\n## Otra sección\ntexto\n');
+    expect(await listNotes('project', cwd)).toEqual(['vieja', 'nueva']); // "una regla propia" NO es una nota
+    await expect(addNote('project', cwd, 'nueva')).rejects.toThrow(/ya existe/);
+
+    expect(await removeNote('project', cwd, 1)).toBe('vieja');
+    expect(await listNotes('project', cwd)).toEqual(['nueva']);
+    expect(readFileSync(join(cwd, 'AGENTE.md'), 'utf8')).toContain('- una regla propia'); // lo que no es memoria se conserva
+    await expect(removeNote('project', cwd, 5)).rejects.toThrow(/No existe la nota 5/);
+  });
+
+  it('personal: archivo privado en AGENTE_HOME, se carga con tope y no depende del proyecto', async () => {
+    await withHome(async (home) => {
+      await addNote('user', '/no/importa', 'prefiero respuestas cortas');
+      expect(userMemoryFile()).toBe(join(home, 'memory.md'));
+      if (process.platform !== 'win32') expect(statSync(userMemoryFile()).mode & 0o777).toBe(0o600);
+      expect(await loadUserMemory()).toBe('- prefiero respuestas cortas');
+      expect(parseNotes(readFileSync(userMemoryFile(), 'utf8'), 'user')).toEqual(['prefiero respuestas cortas']);
+    });
+  });
+
+  it('el prompt del sistema se compone por secciones: base, proyecto y preferencias del usuario', async () => {
+    await withHome(async () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'proj-'));
+      const vacio = await buildSystemPrompt(cwd);
+      expect(vacio).toContain('Eres un asistente de programación');
+      expect(vacio).not.toContain('Instrucciones del proyecto');
+      expect(vacio).not.toContain('Preferencias del usuario'); // sin contenido, sin título
+
+      writeFileSync(join(cwd, 'AGENTE.md'), '# Reglas\n- usa tabs\n');
+      await addNote('user', cwd, 'responde en inglés');
+      const completo = await buildSystemPrompt(cwd);
+      expect(completo).toContain('# Instrucciones del proyecto (AGENTE.md)');
+      expect(completo).toContain('- usa tabs');
+      expect(completo).toContain('# Preferencias del usuario (valen en todos sus proyectos)');
+      expect(completo).toContain('- responde en inglés');
+    });
+  });
+
+  it('una carpeta de proyecto sin permisos o inexistente no rompe el prompt', async () => {
+    await withHome(async () => {
+      mkdirSync(join(tmpdir(), 'agente-vacia'), { recursive: true });
+      expect(await buildSystemPrompt(join(tmpdir(), 'agente-vacia'))).toContain('Eres un asistente');
+    });
   });
 });
