@@ -1,6 +1,11 @@
 import { setTimeout as sleepMs } from 'node:timers/promises';
 import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
 
+import { isTransient, MAX_WAIT_MS, quotaExhaustedError, retryDelayMs, suggestedWaitMs } from './retry.js';
+
+// Se reexportan para no romper a quien ya los importaba desde aquí.
+export { isTransient, retryDelayMs, suggestedWaitMs };
+
 export interface TurnOptions {
   model: LanguageModel;
   system: string;
@@ -124,43 +129,6 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
   return { newMessages, text, stepsUsed: steps, limitReached: steps >= opts.maxSteps && finishReason === 'tool-calls', usage: used };
 }
 
-type ProviderError = { isRetryable?: boolean; statusCode?: number; code?: number; message?: string; lastError?: unknown; cause?: unknown };
-
-function chain(e: unknown): ProviderError[] {
-  const out: ProviderError[] = [];
-  for (let cur = e as ProviderError | undefined, i = 0; cur && typeof cur === 'object' && i < 4; i++) {
-    out.push(cur);
-    cur = (cur.lastError ?? cur.cause) as ProviderError | undefined;
-  }
-  return out;
-}
-
-const TRANSIENT_TEXT = /quota|rate.?limit|high demand|overloaded|unavailable|try again later|resource.?exhausted/i;
-
-/** Errores temporales del proveedor (sobrecarga, límite de tasa, 5xx) que merecen un reintento. */
-export function isTransient(e: unknown): boolean {
-  return chain(e).some(
-    (err) => err.isRetryable === true || [429, 500, 502, 503, 504].includes(err.statusCode ?? err.code ?? 0) || TRANSIENT_TEXT.test(err.message ?? ''),
-  );
-}
-
-const MAX_WAIT_MS = 120_000;
-
-/** Segundos que el proveedor pide esperar ("retry in 52s"), si lo indica. */
-export function suggestedWaitMs(e: unknown): number | undefined {
-  for (const err of chain(e)) {
-    const m = /retry in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s/i.exec(err.message ?? '');
-    if (m) return ((Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0)) * 60 + parseFloat(m[3]!)) * 1000;
-  }
-  return undefined;
-}
-
-/** Espera antes de reintentar: la que sugiere el proveedor ("retry in 52s") o exponencial 2s, 4s, 8s. */
-export function retryDelayMs(e: unknown, attempt: number): number {
-  const hint = suggestedWaitMs(e);
-  return hint !== undefined ? Math.min(MAX_WAIT_MS, Math.ceil(hint) + 500) : 2000 * 2 ** attempt;
-}
-
 /**
  * Ejecuta un turno; ante errores temporales del proveedor lo repite esperando lo que indique el proveedor o 2s, 4s, 8s…
  * Si el turno ya había completado pasos (herramientas ejecutadas), el reintento continúa desde ahí: no se repiten.
@@ -199,12 +167,7 @@ export async function runTurn(
       }
       if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) throw e;
       const hint = suggestedWaitMs(e);
-      if (hint !== undefined && hint > MAX_WAIT_MS) {
-        const mins = Math.round(hint / 60_000);
-        throw new Error(
-          `Cuota agotada: el proveedor pide esperar ~${mins >= 90 ? `${Math.round(mins / 60)} h` : `${mins} min`}. Usa otra clave o modelo (--model), o habilita facturación.`,
-        );
-      }
+      if (hint !== undefined && hint > MAX_WAIT_MS) throw quotaExhaustedError(hint);
       const wait = retryDelayMs(e, attempt);
       opts.onRetry?.(attempt + 1, e, wait);
       await sleep(wait);

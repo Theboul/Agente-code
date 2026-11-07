@@ -1,5 +1,5 @@
 import type { ModelMessage, ToolSet } from 'ai';
-import { compactIfNeeded } from './agent/compaction.js';
+import { type CompactionEvent, compactIfNeeded } from './agent/compaction.js';
 import { runTurn, type TurnUsage } from './agent/loop.js';
 import type { Config } from './config.js';
 import { keyInstructions } from './connect/connect.js';
@@ -23,6 +23,8 @@ export interface ModelTurnOptions {
   messages: ModelMessage[];
   /** Tokens reales del contexto según el último turno (si se conocen): la compactación usa el mayor entre esto y su estimación. */
   knownTokens?: number;
+  /** Se llama al compactar el historial, con el original de lo afectado (la sesión lo archiva). */
+  onCompact?: (e: CompactionEvent) => void | Promise<void>;
   /** false = redacción interna (commit, PR): el texto no se muestra tal cual. */
   stream?: boolean;
 }
@@ -47,14 +49,26 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
   process.once('SIGINT', abort);
   try {
     const model = resolveModel(o.modelId, config);
-    const removed = await compactIfNeeded(o.messages, {
+    await compactIfNeeded(o.messages, {
       model,
       contextWindow: contextWindowFor(o.modelId, config.contextWindow),
       ratio: config.compactAt,
       signal: ac.signal,
       knownTokens: o.knownTokens,
+      onRetry: (n, e, ms) =>
+        ui.warn(
+          `Resumen del contexto: fallo temporal, reintento ${n} en ${Math.round(ms / 1000)}s… (${truncate(e instanceof Error ? e.message : String(e), 90)})`,
+        ),
+      onCompact: async (e) => {
+        const freed = Math.max(0, e.tokensBefore - e.tokensAfter).toLocaleString('es-ES');
+        ui.notice(
+          e.reason === 'summary'
+            ? `⇣ Contexto compactado: ${e.removed} mensajes resumidos (≈ ${freed} tokens liberados). El original queda archivado.`
+            : `⇣ Resultados antiguos de herramientas podados (≈ ${freed} tokens liberados). El original queda archivado.`,
+        );
+        await o.onCompact?.(e);
+      },
     });
-    if (removed) ui.notice(`⇣ Contexto compactado (${removed} mensajes resumidos)`);
     ui.thinking();
     const r = await runTurn({
       model,

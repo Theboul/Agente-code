@@ -1,4 +1,5 @@
 import { generateText, type LanguageModel, type ModelMessage } from 'ai';
+import { withRetry } from './retry.js';
 
 /** Estimación gruesa de tokens: caracteres del JSON / 4 (misma heurística que @openharness/core). */
 export const estimateTokens = (messages: ModelMessage[]): number => Math.ceil(JSON.stringify(messages).length / 4);
@@ -26,6 +27,18 @@ function protectedBoundary(messages: ModelMessage[], protectedTokens: number): n
   return 0;
 }
 
+/** Qué se hizo al compactar, para avisar al usuario y archivar el original. */
+export interface CompactionEvent {
+  reason: 'summary' | 'prune';
+  /** Mensajes tal como eran antes de compactar (solo los afectados). */
+  original: ModelMessage[];
+  /** Mensajes resumidos (summary) o 0 (prune). */
+  removed: number;
+  /** Tokens estimados antes y después. */
+  tokensBefore: number;
+  tokensAfter: number;
+}
+
 /**
  * Si el historial supera `ratio` de la ventana de contexto, lo reduce modificando `messages` en sitio:
  * 1) poda los resultados viejos de herramientas; 2) si no basta, resume lo anterior al tramo protegido con el modelo.
@@ -37,8 +50,14 @@ export async function compactIfNeeded(
     model: LanguageModel;
     contextWindow: number;
     ratio: number;
-    signal?: AbortSignal /** Tamaño real conocido (informado por el proveedor); se usa si supera a la estimación. */;
+    signal?: AbortSignal;
+    /** Tamaño real conocido (informado por el proveedor); se usa si supera a la estimación. */
     knownTokens?: number;
+    /** Se llama al compactar, con el original de lo afectado (para archivarlo) y las cifras (para avisar). */
+    onCompact?: (e: CompactionEvent) => void | Promise<void>;
+    /** Aviso de reintento si la llamada del resumen falla por un error temporal. */
+    onRetry?: (attempt: number, error: unknown, waitMs: number) => void;
+    sleep?: (ms: number) => Promise<void>;
   },
 ): Promise<number> {
   const limit = o.contextWindow * o.ratio;
@@ -49,7 +68,10 @@ export async function compactIfNeeded(
   // Lo podado también se descuenta del tamaño real: la decisión sigue basándose en el mayor de los dos datos.
   const saved = estimateTokens(messages) - estimateTokens(pruned);
   if (Math.max(estimateTokens(pruned), (o.knownTokens ?? 0) - saved) < limit * 0.8) {
+    const original = messages.filter((m, i) => pruned[i] !== m);
+    const before = estimateTokens(messages);
     messages.splice(0, messages.length, ...pruned);
+    if (original.length) await o.onCompact?.({ reason: 'prune', original, removed: 0, tokensBefore: before, tokensAfter: estimateTokens(pruned) });
     return 0;
   }
 
@@ -59,21 +81,29 @@ export async function compactIfNeeded(
   const head = pruned.slice(0, cut);
   if (head.length < 2) return 0;
 
-  const { text } = await generateText({
-    model: o.model,
-    system: SUMMARY_PROMPT,
-    messages: [
-      {
-        role: 'user',
-        content: head
-          .map((m) => `${m.role}: ${JSON.stringify(m.content)}`)
-          .join('\n')
-          .slice(-400_000),
-      },
-    ],
-    abortSignal: o.signal,
-  });
+  const originalHead = messages.slice(0, cut);
+  const tokensBefore = estimateTokens(messages);
+  // Una llamada más al proveedor: puede toparse con el mismo límite por minuto que el turno, así que se reintenta.
+  const { text } = await withRetry(
+    () =>
+      generateText({
+        model: o.model,
+        system: SUMMARY_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: head
+              .map((m) => `${m.role}: ${JSON.stringify(m.content)}`)
+              .join('\n')
+              .slice(-400_000),
+          },
+        ],
+        abortSignal: o.signal,
+      }),
+    { signal: o.signal, onRetry: o.onRetry, sleep: o.sleep },
+  );
   const summary: ModelMessage = { role: 'user', content: `[Resumen de la conversación anterior]\n\n${text}\n\n[La conversación continúa desde aquí]` };
   messages.splice(0, messages.length, summary, ...pruned.slice(cut));
+  await o.onCompact?.({ reason: 'summary', original: originalHead, removed: head.length, tokensBefore, tokensAfter: estimateTokens(messages) });
   return head.length;
 }

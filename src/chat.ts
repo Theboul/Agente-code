@@ -1,7 +1,7 @@
 import type { createInterface } from 'node:readline/promises';
 import { type ModelMessage, type ToolSet, tool } from 'ai';
 import { z } from 'zod';
-import { estimateTokens } from './agent/compaction.js';
+import { type CompactionEvent, estimateTokens } from './agent/compaction.js';
 import { buildSystemPrompt } from './agent/system.js';
 import { type Config, modelFor, ROLES, type Role } from './config.js';
 import { currentBranch } from './git.js';
@@ -10,6 +10,7 @@ import { contextUsage, contextWindowFor, formatContext } from './models.js';
 import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type PermissionMode, type Permissions } from './permissions.js';
 import { missingKeyHint } from './providers.js';
 import { formatWhen, listSessions, loadSession, newSessionId, pruneSessions, type SessionRecord, saveSession, sessionTitle } from './session.js';
+import { archiveCompaction } from './session-archive.js';
 import { nativeTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c } from './ui/ansi.js';
@@ -143,12 +144,23 @@ export async function runChat(d: ChatDeps): Promise<void> {
     }
   };
 
+  /** Guarda el original de lo que la compactación resume o poda; un fallo al archivar nunca interrumpe el chat. */
+  const archive = async (e: CompactionEvent) => {
+    if (!d.sessionDir) return;
+    try {
+      await archiveCompaction(d.sessionDir, { sessionId, reason: e.reason, messages: e.original });
+    } catch (err) {
+      if (!saveFailed) ui.warn(`No se pudo archivar el original de la compactación: ${err instanceof Error ? err.message : err}`);
+      saveFailed = true;
+    }
+  };
+
   const turn = async (input: string) => {
     history.push({ role: 'user', content: input });
     try {
       const { newMessages, usage } = await modelTurn(
         { config, ui, interrupt },
-        { modelId, system, tools: currentTools(), messages: history, knownTokens: contextTokens },
+        { modelId, system, tools: currentTools(), messages: history, knownTokens: contextTokens, onCompact: archive },
       );
       history.push(...newMessages);
       contextTokens = usage.contextTokens;
