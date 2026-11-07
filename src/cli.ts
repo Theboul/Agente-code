@@ -15,6 +15,7 @@ import { connectMcpServers, type McpConnections, toolsOfServer } from './mcp/cli
 import { MODES, type Permissions } from './permissions.js';
 import { missingKeyHint, PROVIDER_HELP } from './providers.js';
 import { formatWhen, listSessions, loadSession, sessionsDir } from './session.js';
+import { searchSessions } from './session-tools.js';
 import { nativeTools, readOnlyTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { c, termWidth, truncate } from './ui/ansi.js';
@@ -46,7 +47,7 @@ Uso:
   agente issues                  Lista issues del tracker (MCP), eliges una y sigue el flujo
   agente connect [jira|trello|github]   Conecta tu tracker paso a paso
   agente login                   Pega la clave de tu proveedor de modelos
-  agente sessions                Lista las conversaciones guardadas de este proyecto
+  agente sessions [texto]        Lista las conversaciones guardadas de este proyecto, o busca "texto" dentro de ellas
   agente init                    Crea agente.config.json y .agente/prompts/ para personalizar
 
 Opciones:
@@ -137,7 +138,7 @@ async function main() {
   }
   const cmd = inv.cmd;
   if (cmd === 'init') return init(cwd);
-  if (cmd === 'sessions') return printSessions(cwd);
+  if (cmd === 'sessions') return printSessions(cwd, inv.args.join(' ').trim());
 
   const config = await loadConfig(cwd);
   const root = (await repoRoot(cwd)) ?? cwd;
@@ -274,8 +275,15 @@ async function pickSession(dir: string): Promise<string | undefined> {
 }
 
 /** `agente sessions`: conversaciones guardadas de este proyecto, la más reciente primero. */
-async function printSessions(cwd: string) {
-  const list = await listSessions(await sessionsDir(cwd));
+async function printSessions(cwd: string, query = '') {
+  const dir = await sessionsDir(cwd);
+  if (query) {
+    const hits = await searchSessions(dir, query);
+    if (!hits.length) return console.log(`Sin resultados para «${query}».`);
+    for (const h of hits) console.log(`${c.cyan(h.id)}  ${formatWhen(h.updatedAt)} · ${h.matches}× · ${h.title}\n    ${h.snippet}`);
+    return console.log(dim('\nRetoma una con `agente --resume <id>` (basta el principio del id).'));
+  }
+  const list = await listSessions(dir);
   if (!list.length) return console.log('Todavía no hay conversaciones guardadas en este proyecto.');
   const w = Math.max(...list.map((s) => s.id.length)) + 2;
   for (const s of list) console.log(`${c.cyan(s.id.padEnd(w))}${formatWhen(s.updatedAt)} · ${String(s.messages).padStart(3)} msj · ${s.title}`);

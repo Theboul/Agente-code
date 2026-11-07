@@ -11,6 +11,8 @@ export interface SessionRecord {
   id: string;
   cwd: string;
   title: string;
+  /** Título puesto por el usuario (/sessions rename); manda sobre el que se deduce del primer mensaje. */
+  customTitle?: string;
   model: string;
   createdAt: string;
   updatedAt: string;
@@ -50,7 +52,7 @@ export function sessionTitle(messages: ModelMessage[]): string {
   return line.length > 70 ? `${line.slice(0, 69)}…` : line || '(sin título)';
 }
 
-const fileOf = (dir: string, id: string) => join(dir, `${id}.json`);
+export const fileOf = (dir: string, id: string): string => join(dir, `${id}.json`);
 
 /**
  * Escritura atómica: si el proceso muere a mitad, la sesión anterior queda intacta. En disco los secretos van ocultos
@@ -76,7 +78,7 @@ function parseRecord(text: string, file: string): SessionRecord {
   return { cwd: '', title: '', model: '', createdAt: rec.updatedAt!, ...rec } as SessionRecord;
 }
 
-async function readAll(dir: string): Promise<SessionRecord[]> {
+export async function readAll(dir: string): Promise<SessionRecord[]> {
   const names = await readdir(dir).catch(() => [] as string[]);
   const out: SessionRecord[] = [];
   for (const name of names.filter((n) => n.endsWith('.json'))) {
@@ -89,7 +91,7 @@ async function readAll(dir: string): Promise<SessionRecord[]> {
 
 /** Sesiones del proyecto, la más reciente primero. */
 export async function listSessions(dir: string): Promise<SessionSummary[]> {
-  return (await readAll(dir)).map((r) => ({ id: r.id, title: r.title, model: r.model, updatedAt: r.updatedAt, messages: r.messages.length }));
+  return (await readAll(dir)).map((r) => ({ id: r.id, title: r.customTitle ?? r.title, model: r.model, updatedAt: r.updatedAt, messages: r.messages.length }));
 }
 
 /**

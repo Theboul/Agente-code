@@ -12,6 +12,7 @@ import { authorizeDetailed, denialMessage, MODE_LABEL, MODES, nextMode, type Per
 import { missingKeyHint } from './providers.js';
 import { formatWhen, listSessions, loadSession, newSessionId, pruneSessions, type SessionRecord, saveSession, sessionTitle } from './session.js';
 import { archiveCompaction } from './session-archive.js';
+import { deleteSession, exportSession, renameSession, searchSessions } from './session-tools.js';
 import { nativeTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { INTERRUPTED_NOTE, ModelTurnError } from './turn-error.js';
@@ -125,6 +126,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
   let history: ModelMessage[] = d.resume?.messages ?? [];
   let sessionId = d.resume?.id ?? newSessionId();
   let sessionStart = d.resume?.createdAt ?? new Date().toISOString();
+  let customTitle = d.resume?.customTitle;
   let contextTokens = 0; // tamaño real del contexto según el proveedor, tras el último turno
   let saveFailed = false;
   let pruned = false;
@@ -137,6 +139,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
         id: sessionId,
         cwd,
         title: sessionTitle(history),
+        ...(customTitle ? { customTitle } : {}),
         model: modelId,
         createdAt: sessionStart,
         updatedAt: new Date().toISOString(),
@@ -245,22 +248,52 @@ export async function runChat(d: ChatDeps): Promise<void> {
         contextTokens = 0;
         sessionId = newSessionId(); // la conversación anterior queda guardada; esta empieza aparte
         sessionStart = new Date().toISOString();
+        customTitle = undefined;
         pruned = false;
         ui.notice('Historial limpiado.');
         break;
       case '/sessions': {
         const dir = d.sessionDir;
-        const list = dir ? await listSessions(dir) : [];
-        if (!dir) ui.notice('Las sesiones no se guardan en este modo.');
-        else if (!list.length) ui.notice('Todavía no hay sesiones guardadas en este proyecto.');
+        if (!dir) {
+          ui.notice('Las sesiones no se guardan en este modo.');
+          break;
+        }
+        const sub = /^(delete|rename|export)\s+(\S+)\s*(.*)$/.exec(arg);
+        if (sub) {
+          const [, action, ref, rest] = sub as unknown as [string, string, string, string];
+          await guarded(async () => {
+            if (action === 'delete') ui.notice(`✔ Sesión borrada: ${(await deleteSession(dir, ref, sessionId)).title}`);
+            else if (action === 'rename') {
+              const renamed = await renameSession(dir, ref, rest);
+              if (renamed.id === sessionId) customTitle = renamed.customTitle;
+              ui.notice(`✔ Renombrada: ${renamed.customTitle}`);
+            } else ui.notice(`✔ Exportada a ${await exportSession(dir, ref)}`);
+          });
+          break;
+        }
+        const list = await listSessions(dir);
+        if (!list.length) ui.notice('Todavía no hay sesiones guardadas en este proyecto.');
         else {
           ui.table(
             list
               .slice(0, 15)
               .map((s): [string, string] => [`${s.id === sessionId ? '● ' : '  '}${s.id}`, `${formatWhen(s.updatedAt)} · ${s.messages} msj · ${s.title}`]),
           );
-          ui.notice(c.dim('Retoma una con /resume <id> (basta el principio del id).'));
+          ui.notice(c.dim('Retoma una con /resume <id> · /sessions delete|rename|export <id> · /search <texto> (basta el principio del id).'));
         }
+        break;
+      }
+      case '/search': {
+        const dir = d.sessionDir;
+        if (!dir) ui.notice('Las sesiones no se guardan en este modo.');
+        else if (!arg) ui.notice('Uso: /search <texto>');
+        else
+          await guarded(async () => {
+            const hits = await searchSessions(dir, arg);
+            if (!hits.length) return ui.notice(`Sin resultados para «${arg}».`);
+            ui.table(hits.map((h): [string, string] => [h.id, `${formatWhen(h.updatedAt)} · ${h.matches}× · ${h.title}\n      ${h.snippet}`]));
+            ui.notice(c.dim('Retoma una con /resume <id>.'));
+          });
         break;
       }
       case '/resume': {
@@ -272,6 +305,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
             history = rec.messages;
             contextTokens = 0; // el dato real se conocerá tras el siguiente turno
             sessionId = rec.id;
+            customTitle = rec.customTitle;
             sessionStart = rec.createdAt;
             pruned = false;
             ui.notice(`↻ Sesión retomada: «${rec.title}» (${rec.messages.length} mensajes, ${formatWhen(rec.updatedAt)})`);

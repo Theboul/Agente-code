@@ -301,4 +301,58 @@ describe('el chat guarda y retoma la conversación', () => {
       expect(log.join('\n')).toMatch(/Olvidado \(proyecto\): primera/);
     });
   });
+
+  describe('comandos de gestión de sesiones en el chat', () => {
+    const quietUi = (log: string[] = []) =>
+      new Proxy(
+        {},
+        { get: (_t, k) => (k === 'prompt' ? () => '' : (m?: unknown) => m !== undefined && log.push(typeof m === 'string' ? m : JSON.stringify(m))) },
+      ) as never;
+    const run = async (dir: string, lines: string[]) => {
+      const log: string[] = [];
+      const { d } = await deps(dir, {
+        handlers: {},
+        ui: quietUi(log),
+        interrupt: { onQuit: () => {}, arm: () => () => {}, fire: () => false, quit: () => false },
+        rl: { question: async () => lines.shift() ?? '/exit' },
+      });
+      await runChat(d);
+      return log.join('\n');
+    };
+
+    it('/search encuentra sesiones anteriores; /sessions rename, export y delete funcionan', async () => {
+      const dir = tmp('chat-gest-');
+      await saveSession(dir, rec('20260101-000000-aaaa', '2026-01-01T00:00:00.000Z', { messages: [{ role: 'user', content: 'migrar a postgres' }] }));
+      const out = await run(dir, ['/search postgres', '/sessions rename 20260101 Migración BD', '/sessions export 20260101', '/sessions delete 20260101']);
+      expect(out).toContain('20260101-000000-aaaa');
+      expect(out).toContain('migrar a postgres');
+      expect(out).toContain('Renombrada: Migración BD');
+      expect(out).toMatch(/Exportada a .*20260101-000000-aaaa\.md/);
+      expect(out).toContain('Sesión borrada: t-20260101-000000-aaaa');
+      expect(await listSessions(dir)).toEqual([]);
+    });
+
+    it('el título propio sobrevive a nuevos turnos de la misma sesión', async () => {
+      const dir = tmp('chat-titulo-');
+      await saveSession(
+        dir,
+        rec('20260101-000000-aaaa', '2026-01-01T00:00:00.000Z', {
+          messages: [
+            { role: 'user', content: 'hola' },
+            { role: 'assistant', content: 'ok' },
+          ],
+          customTitle: 'Mi título',
+        }),
+      );
+      const { d } = await deps(dir, { prompt: 'otra cosa', resume: await loadSession(dir) });
+      await runChat(d);
+      expect((await loadSession(dir)).customTitle).toBe('Mi título');
+    });
+
+    it('no deja borrar la sesión activa y avisa si no existe', async () => {
+      const dir = tmp('chat-gest2-');
+      const out = await run(dir, ['hola', '/sessions', '/sessions delete nada']);
+      expect(out).toContain('No existe la sesión');
+    });
+  });
 });
