@@ -19,6 +19,10 @@ npm link        # deja el comando `agente` disponible en cualquier directorio
 agente --help
 ```
 
+## Demo sin red
+
+`npm run demo` ejecuta un modelo simulado local y muestra al agente delegando en un subagente. Más: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) y [`docs/HOJA-DEFENSA.md`](docs/HOJA-DEFENSA.md).
+
 ## Desarrollo
 
 ```bash
