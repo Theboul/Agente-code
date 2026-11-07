@@ -13,6 +13,7 @@ import { formatWhen, listSessions, loadSession, newSessionId, pruneSessions, typ
 import { archiveCompaction } from './session-archive.js';
 import { nativeTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
+import { INTERRUPTED_NOTE, ModelTurnError } from './turn-error.js';
 import { c } from './ui/ansi.js';
 import type { CompletionState } from './ui/complete.js';
 import { appendHistory } from './ui/history.js';
@@ -166,9 +167,14 @@ export async function runChat(d: ChatDeps): Promise<void> {
       contextTokens = usage.contextTokens;
       await persist();
     } catch (e) {
-      history.pop();
-      const aborted = e instanceof Error && e.message.startsWith('Interrumpido');
-      if (aborted) ui.notice('(interrumpido)');
+      const partial = e instanceof ModelTurnError ? e.partial : [];
+      if (partial.length) {
+        // Hubo trabajo hecho antes del fallo o de la interrupción: se conserva en la sesión (con una nota) en vez de perderlo.
+        history.push(...partial, { role: 'assistant', content: INTERRUPTED_NOTE });
+        await persist();
+      } else history.pop();
+      const aborted = e instanceof ModelTurnError ? e.interrupted : e instanceof Error && e.message.startsWith('Interrumpido');
+      if (aborted) ui.notice(partial.length ? '(interrumpido; el trabajo ya hecho queda guardado en la sesión)' : '(interrumpido)');
       else if (d.prompt !== undefined) throw e;
       else ui.error(e instanceof Error ? e.message : String(e));
     }

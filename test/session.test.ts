@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModelMessage } from 'ai';
@@ -7,12 +7,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { runChat } from '../src/chat.js';
 import { loadConfig } from '../src/config.js';
 import { listSessions, loadSession, newSessionId, pruneSessions, type SessionRecord, saveSession, sessionsDir, sessionTitle } from '../src/session.js';
+import { INTERRUPTED_NOTE, ModelTurnError } from '../src/turn-error.js';
 
 // El chat llama al modelo a través de modelTurn: se simula para probar solo el guardado.
 const seen: ModelMessage[][] = [];
+const hooks = vi.hoisted(() => ({ failNext: undefined as Error | undefined }));
 vi.mock('../src/turn.js', () => ({
   modelTurn: async (_ctx: unknown, o: { messages: ModelMessage[] }) => {
     seen.push(structuredClone(o.messages));
+    if (hooks.failNext) {
+      const e = hooks.failNext;
+      hooks.failNext = undefined;
+      throw e;
+    }
     return {
       text: 'ok',
       newMessages: [{ role: 'assistant', content: `respuesta ${o.messages.length}` }],
@@ -137,5 +144,54 @@ describe('el chat guarda y retoma la conversación', () => {
     await expect(runChat(d)).resolves.toBeUndefined();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/No se pudo guardar la sesión/);
+  });
+
+  describe('turnos interrumpidos o fallidos', () => {
+    const partial: ModelMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'writeFile', input: { filePath: 'a.txt' } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'writeFile', output: { type: 'text', value: 'Escrito a.txt' } }] },
+    ];
+
+    it('un fallo con trabajo hecho conserva ese trabajo en la sesión, con una nota, y el error sigue llegando al usuario', async () => {
+      const dir = tmp('chat-parcial-');
+      hooks.failNext = new ModelTurnError('Falló el modelo x: cuota', partial);
+      await expect(runChat((await deps(dir, { prompt: 'crea a.txt' })).d)).rejects.toThrow(/cuota/);
+      const saved = await loadSession(dir);
+      expect(saved.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
+      expect(saved.messages.at(-1)?.content).toBe(INTERRUPTED_NOTE);
+      expect(JSON.stringify(saved.messages)).toContain('Escrito a.txt');
+    });
+
+    it('una interrupción con Esc también guarda lo hecho y no es un error', async () => {
+      const dir = tmp('chat-esc-');
+      const notices: string[] = [];
+      const { d } = await deps(dir, { prompt: 'crea a.txt' });
+      (d.ui as unknown as { notice: (m: string) => void }).notice = (m) => void notices.push(m);
+      hooks.failNext = new ModelTurnError('Interrumpido por el usuario.', partial, true);
+      await expect(runChat(d)).resolves.toBeUndefined();
+      expect((await loadSession(dir)).messages).toHaveLength(4);
+      expect(notices.join(' ')).toContain('queda guardado');
+    });
+
+    it('un fallo sin ningún paso completado no deja rastro: el mensaje del usuario se retira para poder reintentar', async () => {
+      const dir = tmp('chat-fallo-');
+      hooks.failNext = new ModelTurnError('Falló el modelo x: sin red');
+      await expect(runChat((await deps(dir, { prompt: 'hola' })).d)).rejects.toThrow(/sin red/);
+      expect(await listSessions(dir)).toEqual([]);
+    });
+  });
+
+  describe('privacidad en disco', () => {
+    it('guarda las sesiones sin secretos y solo legibles por su dueño; la copia en memoria no se toca', async () => {
+      const dir = tmp('ses-priv-');
+      const secret = `ghp_${'aB3xY9'.repeat(7)}`;
+      const record = rec('20261107-000000-aaaa', '2026-11-07T00:00:00.000Z', { messages: [{ role: 'user', content: `mi token es ${secret}` }] });
+      await saveSession(dir, record);
+      const text = readFileSync(join(dir, '20261107-000000-aaaa.json'), 'utf8');
+      expect(text).not.toContain(secret);
+      expect(text).toContain('[oculto]');
+      if (process.platform !== 'win32') expect(statSync(join(dir, '20261107-000000-aaaa.json')).mode & 0o777).toBe(0o600);
+      expect(JSON.stringify(record)).toContain(secret);
+    });
   });
 });

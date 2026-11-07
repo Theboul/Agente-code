@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { retryDelayMs, runTurn, suggestedWaitMs } from '../src/agent/loop.js';
+import { retryDelayMs, runTurn, suggestedWaitMs, TurnFailure } from '../src/agent/loop.js';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
@@ -201,5 +201,37 @@ describe('uso real y límite de pasos', () => {
     expect(r.stepsUsed).toBe(3); // 1 paso, fallo, y solo 2 más: no vuelve a empezar de cero
     expect(r.limitReached).toBe(true);
     expect(r.usage.inputTokens).toBe(300);
+  });
+});
+
+describe('trabajo parcial al fallar', () => {
+  const usageP = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
+  const toolStepP = [
+    { type: 'stream-start', warnings: [] },
+    { type: 'tool-call', toolCallId: 'c', toolName: 'eco', input: JSON.stringify({ x: 'a' }) },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool' }, usage: usageP },
+  ];
+  const eco = { eco: tool({ description: 'eco', inputSchema: z.object({ x: z.string() }), execute: async ({ x }) => `eco:${x}` }) };
+
+  it('un fallo definitivo tras un paso completado lleva ese trabajo (llamada y resultado) en el error', async () => {
+    let n = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        if (n++ === 0) return { stream: convertArrayToReadableStream(toolStepP as never) };
+        throw Object.assign(new Error('clave inválida'), { statusCode: 401 });
+      },
+    });
+    const err = await runTurn({ model, system: 's', messages: [{ role: 'user', content: 'x' }], tools: eco, maxSteps: 5 }).catch((e) => e);
+    expect(err).toBeInstanceOf(TurnFailure);
+    expect((err as TurnFailure).original).toMatchObject({ message: 'clave inválida' });
+    expect((err as TurnFailure).partial.map((m) => m.role)).toEqual(['assistant', 'tool']);
+    expect(JSON.stringify((err as TurnFailure).partial)).toContain('eco:a');
+  });
+
+  it('si falla antes de completar ningún paso, el error llega tal cual (sin trabajo parcial)', async () => {
+    const model = new MockLanguageModelV4({ doStream: async () => Promise.reject(Object.assign(new Error('sin red'), { statusCode: 401 })) });
+    const err = await runTurn({ model, system: 's', messages: [{ role: 'user', content: 'x' }], tools: eco, maxSteps: 5 }).catch((e) => e);
+    expect(err).not.toBeInstanceOf(TurnFailure);
+    expect(String(err.message)).toContain('sin red');
   });
 });

@@ -40,6 +40,16 @@ export interface TurnResult {
 }
 
 /** Ejecuta un turno completo del bucle agéntico: modelo → herramientas → modelo… hasta terminar. */
+/** Error definitivo de un turno (tras agotar reintentos o por interrupción) con el trabajo que sí se completó. */
+export class TurnFailure extends Error {
+  constructor(
+    readonly original: unknown,
+    readonly partial: ModelMessage[],
+  ) {
+    super(original instanceof Error ? original.message : String(original));
+  }
+}
+
 /** Error de un turno que ya completó pasos: lleva los mensajes de esos pasos para no repetirlos al reintentar. */
 class PartialTurnError extends Error {
   constructor(
@@ -165,9 +175,13 @@ export async function runTurn(
         carriedUsage.outputTokens += thrown.usage.outputTokens;
         carriedUsage.contextTokens = thrown.usage.contextTokens || carriedUsage.contextTokens;
       }
-      if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) throw e;
+      // Si se rinde, el error lleva el trabajo ya completado para que no se pierda.
+      const giveUp = (err: unknown): never => {
+        throw carried.length ? new TurnFailure(err, [...carried]) : err;
+      };
+      if (opts.abortSignal?.aborted || attempt >= retries || !isTransient(e)) giveUp(e);
       const hint = suggestedWaitMs(e);
-      if (hint !== undefined && hint > MAX_WAIT_MS) throw quotaExhaustedError(hint);
+      if (hint !== undefined && hint > MAX_WAIT_MS) giveUp(quotaExhaustedError(hint));
       const wait = retryDelayMs(e, attempt);
       opts.onRetry?.(attempt + 1, e, wait);
       await sleep(wait);

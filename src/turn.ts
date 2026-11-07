@@ -1,10 +1,11 @@
 import type { ModelMessage, ToolSet } from 'ai';
 import { type CompactionEvent, compactIfNeeded } from './agent/compaction.js';
-import { runTurn, type TurnUsage } from './agent/loop.js';
+import { runTurn, TurnFailure, type TurnUsage } from './agent/loop.js';
 import type { Config } from './config.js';
 import { keyInstructions } from './connect/connect.js';
 import { contextWindowFor } from './models.js';
 import { missingKeyHint, resolveModel } from './providers.js';
+import { ModelTurnError } from './turn-error.js';
 import { truncate } from './ui/ansi.js';
 import type { Interrupt } from './ui/interrupt.js';
 import type { Ui } from './ui/render.js';
@@ -97,13 +98,16 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
       );
     }
     return { text: r.text, newMessages: r.newMessages, usage: r.usage, stepsUsed: r.stepsUsed, limitReached: r.limitReached };
-  } catch (e) {
-    if (ac.signal.aborted) throw new Error('Interrumpido por el usuario.');
+  } catch (thrown) {
+    // El trabajo de los pasos ya completados viaja con el error para que la sesión lo conserve.
+    const partial = thrown instanceof TurnFailure ? thrown.partial : [];
+    const e = thrown instanceof TurnFailure ? thrown.original : thrown;
+    if (ac.signal.aborted) throw new ModelTurnError('Interrumpido por el usuario.', partial, true);
     const msg = e instanceof Error ? e.message : String(e);
     const authHint = /api key|apikey|unauthori[sz]ed|\b40[13]\b|permission denied|invalid.*key/i.test(msg)
       ? '\nSi la clave es incorrecta, cámbiala con /login.'
       : '';
-    throw new Error(`Falló el modelo ${o.modelId}: ${msg}${authHint}`);
+    throw new ModelTurnError(`Falló el modelo ${o.modelId}: ${msg}${authHint}`, partial);
   } finally {
     ui.idle();
     ui.endText();

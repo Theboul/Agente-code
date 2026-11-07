@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ModelMessage } from 'ai';
 import { agenteHome } from './credentials.js';
 import { agentDir, repoRoot } from './git.js';
+import { redactDeep } from './redact.js';
 
 /** Una conversación del chat guardada en disco, para retomarla después. */
 export interface SessionRecord {
@@ -51,12 +52,16 @@ export function sessionTitle(messages: ModelMessage[]): string {
 
 const fileOf = (dir: string, id: string) => join(dir, `${id}.json`);
 
-/** Escritura atómica: si el proceso muere a mitad, la sesión anterior queda intacta. */
+/**
+ * Escritura atómica: si el proceso muere a mitad, la sesión anterior queda intacta. En disco los secretos van ocultos
+ * (claves, tokens, líneas de .env) y el archivo es solo del dueño; la conversación en memoria no se modifica.
+ */
 export async function saveSession(dir: string, rec: SessionRecord): Promise<void> {
   await mkdir(dir, { recursive: true });
   const file = fileOf(dir, rec.id);
   const tmp = `${file}.tmp`;
-  await writeFile(tmp, JSON.stringify(rec));
+  await writeFile(tmp, JSON.stringify(redactDeep(rec)), { mode: 0o600 });
+  await chmod(tmp, 0o600);
   await rename(tmp, file);
 }
 
