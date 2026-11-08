@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { retryDelayMs, runTurn, suggestedWaitMs, TurnFailure } from '../src/agent/loop.js';
+import { announcedWithoutActing, retryDelayMs, runTurn, suggestedWaitMs, TurnFailure } from '../src/agent/loop.js';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
@@ -269,5 +269,35 @@ describe('modelo de respaldo', () => {
 
   it('sin respaldo el comportamiento no cambia', async () => {
     await expect(runTurn({ ...base, model: failing(daily) })).rejects.toThrow(/Cuota agotada/);
+  });
+});
+
+describe('turnos que se detienen sin actuar', () => {
+  it('detecta el anuncio de una acción sin herramientas', () => {
+    expect(announcedWithoutActing('Para generar un plan necesito explorar. Voy a listar los archivos del directorio actual.', 1)).toBe(true);
+    expect(announcedWithoutActing('Listo, ya revisé todo.\n\nVamos a leer el package.json antes de proponerte nada.', 1)).toBe(true);
+    expect(announcedWithoutActing('Voy a listar los archivos.', 2)).toBe(false); // ya hubo herramientas
+    expect(announcedWithoutActing('El proyecto es una API. Voy a explicarte: tiene tres módulos y está terminado.', 1)).toBe(false);
+  });
+
+  it('el resultado del turno incluye el motivo de cierre', async () => {
+    const r = await runTurn({
+      model: new MockLanguageModelV4({
+        doStream: async () => ({
+          stream: convertArrayToReadableStream([
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't' },
+            { type: 'text-delta', id: 't', delta: 'hola' },
+            { type: 'text-end', id: 't' },
+            { type: 'finish', finishReason: { unified: 'length', raw: 'MAX_TOKENS' }, usage },
+          ] as never),
+        }),
+      }),
+      system: 's',
+      messages: [{ role: 'user', content: 'x' }],
+      tools: {},
+      maxSteps: 3,
+    });
+    expect(r.finishReason).toBe('length');
   });
 });

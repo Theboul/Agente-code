@@ -42,7 +42,24 @@ export interface TurnResult {
   stepsUsed: number;
   /** El turno se cortó por llegar a `maxSteps` mientras el modelo aún pedía herramientas: el trabajo puede estar a medias. */
   limitReached: boolean;
+  /** Motivo con que el proveedor cerró el turno (`stop`, `tool-calls`, `length`, `other`…). */
+  finishReason?: string;
   usage: TurnUsage;
+}
+
+/**
+ * El modelo cerró el turno diciendo que iba a hacer algo («Voy a listar los archivos…») sin llamar a ninguna herramienta.
+ * Los modelos pequeños lo hacen a veces; sin aviso parece que el arnés se colgó.
+ */
+export function announcedWithoutActing(text: string, stepsUsed: number): boolean {
+  if (stepsUsed !== 1) return false;
+  const last =
+    text
+      .trim()
+      .split(/(?<=[.!?:])\s+|\n+/)
+      .filter(Boolean)
+      .at(-1) ?? '';
+  return /\b(voy a|vamos a|déjame|dejame|procedo a|a continuación|ahora voy|primero necesito)\b/i.test(last);
 }
 
 /** Ejecuta un turno completo del bucle agéntico: modelo → herramientas → modelo… hasta terminar. */
@@ -142,7 +159,7 @@ async function runTurnOnce(opts: TurnOptions): Promise<TurnResult> {
     opts.abortSignal?.removeEventListener('abort', onUserAbort);
   }
 
-  return { newMessages, text, stepsUsed: steps, limitReached: steps >= opts.maxSteps && finishReason === 'tool-calls', usage: used };
+  return { newMessages, text, stepsUsed: steps, limitReached: steps >= opts.maxSteps && finishReason === 'tool-calls', finishReason, usage: used };
 }
 
 /**

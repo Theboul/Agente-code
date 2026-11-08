@@ -1,6 +1,6 @@
 import type { ModelMessage, ToolSet } from 'ai';
 import { type CompactionEvent, compactIfNeeded } from './agent/compaction.js';
-import { runTurn, TurnFailure, type TurnUsage } from './agent/loop.js';
+import { announcedWithoutActing, runTurn, TurnFailure, type TurnUsage } from './agent/loop.js';
 import type { Config } from './config.js';
 import { keyInstructions } from './connect/connect.js';
 import { contextWindowFor } from './models.js';
@@ -103,6 +103,13 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
     if (r.limitReached) {
       ui.warn(
         `Se alcanzó el límite de ${config.maxSteps} pasos del turno y el trabajo puede estar a medias. Escribe "continúa" para que siga (o sube maxSteps en la configuración).`,
+      );
+    }
+    if (r.finishReason && !['stop', 'tool-calls'].includes(r.finishReason)) {
+      ui.warn(`La respuesta terminó antes de tiempo (motivo: ${r.finishReason}). Escribe "continúa" o prueba otro modelo con /model.`);
+    } else if (!r.limitReached && announcedWithoutActing(r.text, r.stepsUsed)) {
+      ui.warn(
+        'El modelo anunció una acción pero no la ejecutó. Escribe "hazlo" o "continúa" (los modelos pequeños a veces se detienen así; /model cambia de modelo).',
       );
     }
     return { text: r.text, newMessages: r.newMessages, usage: r.usage, stepsUsed: r.stepsUsed, limitReached: r.limitReached };
