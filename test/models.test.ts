@@ -25,8 +25,8 @@ describe('porcentaje de contexto', () => {
   it('calcula y formatea el uso', () => {
     const u = contextUsage(41_200, 200_000, 0.75);
     expect(u).toEqual({ tokens: 41_200, window: 200_000, percent: 21, compactAtPercent: 75 });
-    expect(formatContext(u)).toBe('contexto: 41.200 / 200.000 tokens (21 %) · se compacta al 75 %');
-    expect(formatContext(u, true)).toContain('≈ 41.200');
+    expect(formatContext(u)).toBe('contexto: ▰▰▱▱▱▱▱▱▱▱ 21 % · 41.200 / 200.000 tokens · se compacta al 75 %');
+    expect(formatContext(u, true)).toContain('≈ 21 %');
   });
 
   it('no pasa del 100 % y redondea', () => {

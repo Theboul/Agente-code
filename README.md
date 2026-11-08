@@ -194,6 +194,8 @@ No se reescribieron: vienen de [`@openharness/core`](https://github.com/MaxGfell
 
 Los archivos de configuración del proyecto (`package.json`, `tsconfig*.json`, `biome.json`, `agente.config.json`, `.npmrc`, `.github/workflows/`) **siempre piden confirmación** antes de editarse, incluso con `--yes` o en modo `edits`, y no ofrecen "no volver a preguntar". Así el modelo no puede cambiar en silencio cómo se valida o se construye el proyecto.
 
+**Medidor de contexto.** La regla sobre el prompt muestra siempre `ctx ▰▰▱▱▱▱▱▱▱▱ 21 %` junto al modo (verde con holgura, amarillo al acercarse al umbral de compactación, rojo al alcanzarlo; `≈` mientras no hay dato real del proveedor). `/status` da el detalle en tokens y, cuando se compacta, el aviso enseña el antes y el después: `⇣ Contexto compactado ▰▰▰▰▰▰▰▰▱▱ 78 % → ▰▰▱▱▱▱▱▱▱▱ 21 %`.
+
 ### Modelo de respaldo
 
 Con `"fallbackModel": "proveedor/modelo"` en la configuración, si el modelo principal agota la cuota o sigue fallando de forma temporal tras los reintentos, el turno continúa con el de respaldo desde donde se quedó (una sola vez, con aviso). No actúa ante errores de clave o de petición. Se ignora si falta la clave del respaldo.

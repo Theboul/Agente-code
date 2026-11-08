@@ -59,3 +59,14 @@ export function colorizeDiff(patch: string): string {
     })
     .join('\n');
 }
+
+/**
+ * Barra de uso del contexto: "▰▰▰▱▱▱▱▱▱▱". Verde mientras queda holgura, amarilla al acercarse al umbral
+ * de compactación y roja al alcanzarlo. Sin color (no TTY) se sigue leyendo por la forma y el porcentaje.
+ */
+export function contextBar(percent: number, compactAtPercent: number, width = 10): string {
+  const filled = Math.max(0, Math.min(width, Math.round((percent / 100) * width)));
+  const bar = '▰'.repeat(filled) + '▱'.repeat(width - filled);
+  const paint = percent >= compactAtPercent ? c.red : percent >= compactAtPercent * 0.7 ? c.yellow : c.green;
+  return paint(bar);
+}

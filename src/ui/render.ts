@@ -1,4 +1,4 @@
-import { c, clearLine, padEnd, restoreCursor, saveCursor, termWidth, truncate, upOneLine } from './ansi.js';
+import { c, clearLine, padEnd, restoreCursor, saveCursor, termWidth, truncate, upOneLine, visibleWidth } from './ansi.js';
 import { box } from './box.js';
 
 type Out = { write(chunk: string): unknown; isTTY?: boolean };
@@ -174,21 +174,24 @@ export class Ui {
   }
 
   /** Regla sobre la línea de entrada, con el modo de permisos: "── modo: … · Shift+Tab cambia ────". */
-  rule(label?: string): string {
+  rule(label?: string, gauge?: string): string {
     if (!label) return c.gray('─'.repeat(termWidth()));
     const text = ` ${label} `;
-    return `${c.gray('──')}${c.dim(text)}${c.gray('─'.repeat(Math.max(2, termWidth() - 2 - [...text].length)))}`;
+    // `gauge` ya viene con su propio color (barra de contexto); se separa del texto atenuado.
+    const extra = gauge ? `${c.dim('· ')}${gauge} ` : '';
+    const used = 2 + [...text].length + (gauge ? 2 + visibleWidth(gauge) + 1 : 0);
+    return `${c.gray('──')}${c.dim(text)}${extra}${c.gray('─'.repeat(Math.max(2, termWidth() - used)))}`;
   }
 
   /** Línea de entrada: regla superior y "›" como prompt. */
-  prompt(label?: string): string {
-    return `\n${this.rule(label)}\n${c.bold('›')} `;
+  prompt(label?: string, gauge?: string): string {
+    return `\n${this.rule(label, gauge)}\n${c.bold('›')} `;
   }
 
   /** Redibuja la regla sin tocar lo que el usuario ya escribió (solo si la entrada cabe en una línea). */
-  redrawRule(label: string, typed: number): void {
+  redrawRule(label: string, typed: number, gauge?: string): void {
     if (!this.out.isTTY || typed + 4 >= termWidth()) return;
-    this.write(`${saveCursor}${upOneLine}\r${clearLine}${this.rule(label)}${restoreCursor}`);
+    this.write(`${saveCursor}${upOneLine}\r${clearLine}${this.rule(label, gauge)}${restoreCursor}`);
   }
 
   text(delta: string): void {

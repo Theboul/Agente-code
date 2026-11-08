@@ -356,3 +356,20 @@ describe('colorizeDiff', () => {
     expect(stripAnsi(colorizeDiff(patch))).toBe(patch);
   });
 });
+
+describe('medidor de contexto', () => {
+  it('la barra se llena según el porcentaje y respeta los extremos', async () => {
+    const { contextBar, stripAnsi } = await import('../src/ui/ansi.js');
+    expect(stripAnsi(contextBar(0, 75))).toBe('▱▱▱▱▱▱▱▱▱▱');
+    expect(stripAnsi(contextBar(50, 75))).toBe('▰▰▰▰▰▱▱▱▱▱');
+    expect(stripAnsi(contextBar(100, 75))).toBe('▰▰▰▰▰▰▰▰▰▰');
+    expect(stripAnsi(contextBar(250, 75))).toBe('▰▰▰▰▰▰▰▰▰▰'); // nunca se desborda
+  });
+  it('la regla del prompt incluye el medidor sin pasarse del ancho', () => {
+    const lines: string[] = [];
+    const ui = new Ui({ write: (s: string) => lines.push(s), isTTY: false } as never);
+    const rule = stripAnsi(ui.rule('modo: preguntar antes de cambiar · Shift+Tab cambia', 'ctx ▰▰▱▱▱▱▱▱▱▱ 21 %'));
+    expect(rule).toContain('· ctx ▰▰▱▱▱▱▱▱▱▱ 21 %');
+    expect(visibleWidth(rule)).toBeLessThanOrEqual(100);
+  });
+});

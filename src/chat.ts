@@ -18,7 +18,7 @@ import { deleteSession, exportSession, renameSession, searchSessions } from './s
 import { nativeTools, researchTools } from './tools/index.js';
 import { modelTurn } from './turn.js';
 import { INTERRUPTED_NOTE, ModelTurnError } from './turn-error.js';
-import { c } from './ui/ansi.js';
+import { c, contextBar } from './ui/ansi.js';
 import type { CompletionState } from './ui/complete.js';
 import { appendHistory } from './ui/history.js';
 import type { Interrupt } from './ui/interrupt.js';
@@ -218,6 +218,16 @@ export async function runChat(d: ChatDeps): Promise<void> {
   if (!mcp.status.some((x) => x.ok)) ui.notice('Sin tracker conectado: /connect jira|trello|github');
   if (d.resume) ui.notice(`↻ Sesión retomada: «${d.resume.title}» (${d.resume.messages.length} mensajes, ${formatWhen(d.resume.updatedAt)})`);
   const modeLabel = () => `modo: ${MODE_LABEL[perms.mode ?? 'ask']} · Shift+Tab cambia`;
+  /** Medidor de contexto junto al modo: "ctx ▰▰▱▱▱▱▱▱▱▱ 21 %". Con ≈ si aún no hay dato real del proveedor. */
+  const gauge = (): string => {
+    const real = contextTokens > 0;
+    const u = contextUsage(
+      real ? contextTokens : estimateTokens(history) + Math.ceil(system.length / 4),
+      contextWindowFor(modelId, config.contextWindow),
+      config.compactAt,
+    );
+    return `ctx ${contextBar(u.percent, u.compactAtPercent)} ${real ? '' : '≈ '}${u.percent} %`;
+  };
   d.completion.suppress = false;
 
   // Shift+Tab cambia el modo. Se escucha antes que readline para marcar que no es un Tab de completado.
@@ -225,7 +235,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
     if (key?.name !== 'tab' || !key.shift) return;
     d.completion.suppress = true;
     perms.mode = nextMode(perms.mode ?? 'ask');
-    ui.redrawRule(modeLabel(), rl.line.length);
+    ui.redrawRule(modeLabel(), rl.line.length, gauge());
   };
   if (process.stdin.isTTY) process.stdin.prependListener('keypress', onKey);
 
@@ -248,7 +258,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
   const statusContext = (): string => {
     const window = contextWindowFor(modelId, config.contextWindow);
     const real = contextTokens > 0;
-    return formatContext(contextUsage(real ? contextTokens : estimateTokens(history), window, config.compactAt), !real);
+    return formatContext(contextUsage(real ? contextTokens : estimateTokens(history) + Math.ceil(system.length / 4), window, config.compactAt), !real);
   };
 
   const command = async (line: string): Promise<boolean> => {
@@ -446,7 +456,7 @@ export async function runChat(d: ChatDeps): Promise<void> {
     const quit = new AbortController();
     interrupt.onQuit(() => quit.abort());
     try {
-      line = (await rl.question(ui.prompt(modeLabel()), { signal: quit.signal })).trim();
+      line = (await rl.question(ui.prompt(modeLabel(), gauge()), { signal: quit.signal })).trim();
     } catch {
       break; // stdin cerrado o Ctrl+C repetido
     } finally {

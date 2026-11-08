@@ -3,10 +3,10 @@ import { type CompactionEvent, compactIfNeeded } from './agent/compaction.js';
 import { announcedWithoutActing, runTurn, TurnFailure, type TurnUsage } from './agent/loop.js';
 import type { Config } from './config.js';
 import { keyInstructions } from './connect/connect.js';
-import { contextWindowFor } from './models.js';
+import { contextUsage, contextWindowFor } from './models.js';
 import { missingKeyHint, resolveModel } from './providers.js';
 import { ModelTurnError } from './turn-error.js';
-import { truncate } from './ui/ansi.js';
+import { contextBar, truncate } from './ui/ansi.js';
 import type { Interrupt } from './ui/interrupt.js';
 import type { Ui } from './ui/render.js';
 
@@ -62,10 +62,14 @@ export async function modelTurn(ctx: TurnContext, o: ModelTurnOptions): Promise<
         ),
       onCompact: async (e) => {
         const freed = Math.max(0, e.tokensBefore - e.tokensAfter).toLocaleString('es-ES');
+        const window = contextWindowFor(o.modelId, config.contextWindow);
+        const before = contextUsage(e.tokensBefore, window, config.compactAt);
+        const after = contextUsage(e.tokensAfter, window, config.compactAt);
+        const change = `${contextBar(before.percent, before.compactAtPercent)} ${before.percent} % → ${contextBar(after.percent, after.compactAtPercent)} ${after.percent} %`;
         ui.notice(
           e.reason === 'summary'
-            ? `⇣ Contexto compactado: ${e.removed} mensajes resumidos (≈ ${freed} tokens liberados). El original queda archivado.`
-            : `⇣ Resultados antiguos de herramientas podados (≈ ${freed} tokens liberados). El original queda archivado.`,
+            ? `⇣ Contexto compactado ${change} · ${e.removed} mensajes resumidos (≈ ${freed} tokens liberados). El original queda archivado.`
+            : `⇣ Resultados antiguos de herramientas podados ${change} (≈ ${freed} tokens liberados). El original queda archivado.`,
         );
         await o.onCompact?.(e);
       },

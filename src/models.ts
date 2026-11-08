@@ -1,3 +1,5 @@
+import { contextBar } from './ui/ansi.js';
+
 /**
  * Ventana de contexto de los modelos conocidos. Son valores orientativos: si tu modelo no está aquí o tienes
  * otro límite, fíjalo con `contextWindow` en la configuración (manda siempre).
@@ -40,7 +42,7 @@ export function contextUsage(tokens: number, window: number, compactAt: number):
 
 const fmt = (n: number) => n.toLocaleString('es-ES');
 
-/** "contexto: 41.200 / 200.000 tokens (21 %) · se compacta al 75 %". `approx` marca una estimación (aún sin dato del proveedor). */
+/** "contexto: ▰▰▱▱▱▱▱▱▱▱ 21 % · 41.200 / 200.000 tokens · se compacta al 75 %". `approx` marca una estimación (aún sin dato del proveedor). */
 export function formatContext(u: ContextUsage, approx = false): string {
-  return `contexto: ${approx ? '≈ ' : ''}${fmt(u.tokens)} / ${fmt(u.window)} tokens (${u.percent} %) · se compacta al ${u.compactAtPercent} %`;
+  return `contexto: ${contextBar(u.percent, u.compactAtPercent)} ${approx ? '≈ ' : ''}${u.percent} % · ${fmt(u.tokens)} / ${fmt(u.window)} tokens · se compacta al ${u.compactAtPercent} %`;
 }
