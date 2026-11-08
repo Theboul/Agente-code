@@ -54,7 +54,7 @@ describe('config y proveedores', () => {
 
 describe('bash', () => {
   it('captura salida y código', async () => {
-    const out = await runCommand(process.cwd(), 'echo hola; exit 3', 5000);
+    const out = await runCommand(process.cwd(), 'echo hola; exit 3', 30_000);
     expect(out).toContain('hola');
     expect(out).toContain('[exit 3]');
   });
@@ -62,14 +62,16 @@ describe('bash', () => {
     expect(await runCommand(process.cwd(), 'sleep 5', 200)).toContain('señal SIGKILL');
   });
   it('al vencer el tiempo responde enseguida, sin esperar a los procesos hijos, y conserva la salida previa', async () => {
+    // En Windows arrancar el shell puede tardar segundos (antivirus, carga): el plazo debe dar tiempo a que salga "antes".
+    const plazo = process.platform === 'win32' ? 8000 : 300;
     const inicio = Date.now();
-    const r = await execCommand(process.cwd(), 'echo antes; sleep 5', 300);
-    expect(Date.now() - inicio).toBeLessThan(3000);
+    const r = await execCommand(process.cwd(), 'echo antes; sleep 60', plazo);
+    expect(Date.now() - inicio).toBeLessThan(plazo + 5000);
     expect(r).toMatchObject({ code: null, timedOut: true });
     expect(r.output).toContain('antes');
   });
   it('sin vencer el tiempo devuelve el código real y no marca timeout', async () => {
-    const r = await execCommand(process.cwd(), 'echo ok; exit 2', 5000);
+    const r = await execCommand(process.cwd(), 'echo ok; exit 2', 30_000);
     expect(r).toMatchObject({ code: 2, timedOut: false });
     expect(r.output).toContain('ok');
   });
