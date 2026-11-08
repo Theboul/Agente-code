@@ -7,7 +7,7 @@
 **Qué lo distingue**
 1. Multi-modelo (Gemini por defecto; Anthropic/OpenAI/Ollama) con roles plan/implement/light.
 2. MCP real para trackers; el flujo sincroniza el estado de la issue.
-3. Memoria completa: sesiones retomables, compactación automática, `/remember`, memoria del flujo.
+3. Memoria completa: sesiones retomables, compactación automática con medidor de contexto en pantalla, `/remember`, memoria del flujo.
 4. Subagentes de solo lectura con contexto aislado.
 5. Seguridad por capas: rutas, comandos, confirmaciones, secretos redactados, contenido externo como datos, archivos de configuración que siempre piden confirmación.
 6. Modelo de respaldo si se agota la cuota.
@@ -22,4 +22,4 @@
 - *¿Por qué los subagentes no escriben?* Evita conflictos y mantiene el control humano.
 - *¿Qué no cubre aún?* Ejecución en sandbox, OAuth de Atlassian, interfaz interactiva probada solo en CI en Windows.
 
-**Cifras:** ~360 pruebas, 9 comprobaciones de extremo a extremo, CI en 2 sistemas operativos.
+**Cifras:** ~370 pruebas, 9 comprobaciones de extremo a extremo, CI en 2 sistemas operativos.
